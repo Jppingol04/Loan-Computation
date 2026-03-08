@@ -70,9 +70,8 @@ export function calculateMonthsBetween(start: string, end: string): number {
 }
 
 /**
- * Generates an IFRS 9 schedule based on anniversary dates.
- * If a loan starts on Jan 31st, subsequent months will fall on the 31st
- * or the last day of the month if it's shorter (e.g., Feb 28th).
+ * Generates an IFRS 9 schedule based on calendar End of Month (EOM) dates.
+ * Each period corresponds to the end of a calendar month starting from the loan's inception.
  */
 export function generateAmortizationSchedule(input: LoanInput): AmortizationPeriod[] {
   const schedule: AmortizationPeriod[] = [];
@@ -89,7 +88,6 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   
   const monthlyRate = (annualInterestRate || 0) / 12 / 100;
   const start = parseLocalDate(startDate);
-  const anchorDay = start.getDate();
 
   // Aggregate drawdowns that happened AT or BEFORE the exact start date as "Initial"
   const initialDrawdowns = drawdowns.filter(d => {
@@ -102,16 +100,11 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   let cumulativeInterest = 0;
 
   for (let i = 1; i <= (termInMonths || 1); i++) {
-    // Calculate the anniversary date for this period
-    // new Date(y, m + i, d) handles overflows automatically.
-    // However, to mimic banking logic (e.g. 31st -> 28th), we need a check.
-    let targetDate = new Date(start.getFullYear(), start.getMonth() + i, anchorDay);
-    
-    // If we passed the intended month (e.g. Jan 31 -> March 3), snap to month end
-    if (targetDate.getDate() !== anchorDay) {
-      targetDate = new Date(start.getFullYear(), start.getMonth() + i + 1, 0);
-    }
-    
+    // Calculate the End of Month (EOM) for this period.
+    // If the loan starts in Month M, Period 1 is the end of Month M.
+    // However, if the start date is already at EOM, it usually rolls to the next month end.
+    // For simplicity in this accrual engine, Period 1 is the EOM of the current month.
+    let targetDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
     const dateStr = toDateString(targetDate);
 
     // Calculate the period window (Previous period end to current period end)
@@ -119,21 +112,19 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     if (i === 1) {
       prevPeriodEnd = new Date(start);
     } else {
-      prevPeriodEnd = new Date(start.getFullYear(), start.getMonth() + i - 1, anchorDay);
-      if (prevPeriodEnd.getDate() !== anchorDay) {
-        prevPeriodEnd = new Date(start.getFullYear(), start.getMonth() + i, 0);
-      }
+      // Previous period end was the EOM of the previous iteration
+      prevPeriodEnd = new Date(start.getFullYear(), start.getMonth() + i - 1, 0);
     }
 
-    // Filter drawdowns falling strictly within this month's window
+    // Filter drawdowns falling strictly within this calendar month window
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = parseLocalDate(d.date);
       return dDate > prevPeriodEnd && dDate <= targetDate;
     });
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
     
-    // Interest accrues on the daily average balance or balance after drawdowns
-    // For this simple engine, we accrue on balance + period drawdowns
+    // Interest accrues on the balance including new drawdowns for simplicity.
+    // In a high-fidelity model, this would use daily average balance (DAB).
     const balanceForInterest = currentBalance + drawdownAmount;
     const interestAccrual = Number((balanceForInterest * monthlyRate).toFixed(2));
     
@@ -141,9 +132,14 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     let principalPaid = manualPmtList.reduce((acc, p) => acc + p.principalAmount, 0);
     let interestPaid = manualPmtList.reduce((acc, p) => acc + p.interestAmount, 0);
 
-    // Bullet Repayment Logic at Maturity
-    if (i === termInMonths && isBullet && principalPaid === 0) {
-      principalPaid = Number((balanceForInterest + interestAccrual).toFixed(2));
+    // Bullet Repayment Logic at Maturity (End of term)
+    if (i === termInMonths && isBullet) {
+      // If user hasn't manually fully settled, the bullet settles everything.
+      const totalOutstanding = balanceForInterest + interestAccrual - principalPaid - interestPaid;
+      if (totalOutstanding > 0) {
+        principalPaid = Number((principalPaid + (balanceForInterest - principalPaid)).toFixed(2));
+        interestPaid = Number((interestPaid + (interestAccrual - interestPaid)).toFixed(2));
+      }
     }
 
     const closingBalance = Number((balanceForInterest + interestAccrual - principalPaid - interestPaid).toFixed(2));
@@ -169,7 +165,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       status,
     });
 
-    currentBalance = closingBalance;
+    currentBalance = Math.max(0, closingBalance);
   }
 
   return schedule;
