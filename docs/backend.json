@@ -4,40 +4,40 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Loan",
       "type": "object",
-      "description": "Represents a single auto loan with its core parameters and administrative details.",
+      "description": "Represents a single auto loan, storing its primary parameters and metadata.",
       "properties": {
         "id": {
           "type": "string",
           "description": "Unique identifier for the Loan entity."
         },
-        "userId": {
+        "loanName": {
           "type": "string",
-          "description": "ID of the user who owns this loan. (Relationship: User 1:N Loan)"
-        },
-        "name": {
-          "type": "string",
-          "description": "A user-defined name or reference for the loan, e.g., 'Car Loan - John Doe'."
+          "description": "User-defined name or reference for the loan."
         },
         "principalAmount": {
           "type": "number",
-          "description": "The initial principal amount of the loan, in the specified currency."
+          "description": "The initial principal amount of the loan."
         },
         "annualInterestRate": {
           "type": "number",
-          "description": "The annual interest rate of the loan, expressed as a percentage (e.g., 5.5 for 5.5%)."
+          "description": "The annual interest rate in percentage, used for calculations (e.g., 5.5 for 5.5%)."
         },
-        "termInMonths": {
+        "termMonths": {
           "type": "number",
           "description": "The total duration of the loan in months."
         },
         "startDate": {
           "type": "string",
           "description": "The start date of the loan.",
-          "format": "date-time"
+          "format": "date"
         },
         "currency": {
           "type": "string",
-          "description": "The currency in which the loan is denominated (e.g., 'AED', 'USD', 'EUR')."
+          "description": "The currency code for the loan (e.g., AED, USD, EUR, GBP, PHP)."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Reference to the user who owns this loan. (Relationship: User 1:N Loan)"
         },
         "createdAt": {
           "type": "string",
@@ -52,38 +52,38 @@
       },
       "required": [
         "id",
-        "userId",
-        "name",
+        "loanName",
         "principalAmount",
         "annualInterestRate",
-        "termInMonths",
+        "termMonths",
         "startDate",
         "currency",
+        "userId",
         "createdAt"
       ]
     },
-    "AmortizationSchedulePeriod": {
+    "AmortizationPeriod": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "AmortizationSchedulePeriod",
+      "title": "AmortizationPeriod",
       "type": "object",
-      "description": "Represents a single period within the loan's amortization schedule, calculated using the IFRS 9 EIR method.",
+      "description": "Represents a single period (month) in the loan's amortization schedule, detailing financial movements.",
       "properties": {
         "id": {
           "type": "string",
-          "description": "Unique identifier for the AmortizationSchedulePeriod entity."
+          "description": "Unique identifier for the AmortizationPeriod entity. Typically derived from the period number."
         },
         "loanId": {
           "type": "string",
-          "description": "Reference to the parent Loan entity. (Relationship: Loan 1:N AmortizationSchedulePeriod)"
+          "description": "Reference to the parent Loan entity. (Relationship: Loan 1:N AmortizationPeriod)"
         },
         "periodNumber": {
           "type": "number",
-          "description": "The sequential number of the amortization period, starting from 1."
+          "description": "The sequential number of the amortization period."
         },
         "date": {
           "type": "string",
           "description": "The end date of the amortization period.",
-          "format": "date-time"
+          "format": "date"
         },
         "openingBalance": {
           "type": "number",
@@ -91,7 +91,7 @@
         },
         "interestAccrual": {
           "type": "number",
-          "description": "The amount of interest accrued during this period based on the opening balance and monthly effective interest rate."
+          "description": "The amount of interest accrued during this period based on the opening balance and monthly rate."
         },
         "principalPortion": {
           "type": "number",
@@ -99,19 +99,18 @@
         },
         "totalPayment": {
           "type": "number",
-          "description": "The total payment made or due for this period (sum of principal portion and interest accrual)."
+          "description": "The total payment made for this period."
         },
         "closingBalance": {
           "type": "number",
           "description": "The outstanding principal balance at the end of the period."
         },
-        "cumulativeInterest": {
-          "type": "number",
-          "description": "The total interest accrued from the start of the loan up to the end of this period."
-        },
         "status": {
           "type": "string",
-          "description": "The current status of the amortization period (e.g., 'projected', 'paid', 'recalculated')."
+          "description": "The status of this period (e.g., projected, paid, recalculated).",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -124,15 +123,128 @@
         "principalPortion",
         "totalPayment",
         "closingBalance",
-        "cumulativeInterest",
         "status"
+      ]
+    },
+    "InterestRateChange": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "InterestRateChange",
+      "type": "object",
+      "description": "Records details of an interest rate change applied to a loan, crucial for IFRS 9 prospective recalculation and audit trail.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the InterestRateChange entity."
+        },
+        "loanId": {
+          "type": "string",
+          "description": "Reference to the Loan entity to which this rate change applies. (Relationship: Loan 1:N InterestRateChange)"
+        },
+        "newAnnualRate": {
+          "type": "number",
+          "description": "The new annual interest rate applied from the effective period."
+        },
+        "effectiveFromPeriod": {
+          "type": "number",
+          "description": "The period number from which the new interest rate becomes effective."
+        },
+        "reasonForChange": {
+          "type": "string",
+          "description": "Detailed explanation or justification for the interest rate change."
+        },
+        "oldAnnualRate": {
+          "type": "number",
+          "description": "The annual interest rate before this change was applied."
+        },
+        "remainingBalanceAtChange": {
+          "type": "number",
+          "description": "The opening balance of the loan at the effective period of the rate change, used as the new principal for recalculation."
+        },
+        "changedAt": {
+          "type": "string",
+          "description": "Timestamp when the interest rate change was recorded.",
+          "format": "date-time"
+        },
+        "changedByUserId": {
+          "type": "string",
+          "description": "Reference to the user who initiated this interest rate change. (Relationship: User 1:N InterestRateChange)"
+        }
+      },
+      "required": [
+        "id",
+        "loanId",
+        "newAnnualRate",
+        "effectiveFromPeriod",
+        "reasonForChange",
+        "oldAnnualRate",
+        "remainingBalanceAtChange",
+        "changedAt",
+        "changedByUserId"
+      ]
+    },
+    "JournalEntry": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "JournalEntry",
+      "type": "object",
+      "description": "Represents a single journal entry or a set of related journal lines for a specific loan period, compatible with ERP systems like Odoo.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the JournalEntry entity."
+        },
+        "loanId": {
+          "type": "string",
+          "description": "Reference to the parent Loan entity. (Relationship: Loan 1:N JournalEntry)"
+        },
+        "periodNumber": {
+          "type": "number",
+          "description": "The amortization period to which this journal entry relates. (Implicitly references AmortizationPeriod via periodNumber)"
+        },
+        "journalType": {
+          "type": "string",
+          "description": "Type of journal entry (e.g., 'Accrual', 'Payment').",
+          "items": {
+            "type": "string"
+          }
+        },
+        "date": {
+          "type": "string",
+          "description": "The date of the journal entry.",
+          "format": "date"
+        },
+        "reference": {
+          "type": "string",
+          "description": "A descriptive reference for the journal entry (e.g., 'LoanName - Period X Accrual')."
+        },
+        "lines": {
+          "type": "array",
+          "description": "An array of individual journal entry lines (debits/credits).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the journal entry was generated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "loanId",
+        "periodNumber",
+        "journalType",
+        "date",
+        "reference",
+        "lines",
+        "createdAt"
       ]
     },
     "AuditEntry": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "AuditEntry",
       "type": "object",
-      "description": "Records every significant user action or system event related to a loan, forming an immutable audit trail.",
+      "description": "Records an immutable log of significant actions and changes related to a loan for auditing purposes.",
       "properties": {
         "id": {
           "type": "string",
@@ -140,111 +252,41 @@
         },
         "loanId": {
           "type": "string",
-          "description": "Reference to the parent Loan entity for which the action was performed. (Relationship: Loan 1:N AuditEntry)"
-        },
-        "userId": {
-          "type": "string",
-          "description": "ID of the user who performed the action. (Relationship: User 1:N AuditEntry)"
+          "description": "Reference to the parent Loan entity. (Relationship: Loan 1:N AuditEntry)"
         },
         "timestamp": {
           "type": "string",
-          "description": "The date and time when the action was logged.",
+          "description": "ISO 8601 timestamp when the action occurred.",
           "format": "date-time"
         },
         "actionType": {
           "type": "string",
-          "description": "The category of action performed (e.g., 'Schedule Generated', 'Interest Rate Change', 'Period Marked Paid', 'Export Excel')."
+          "description": "Categorization of the action (e.g., 'Schedule Generated', 'Interest Rate Change', 'Period Marked Paid', 'Excel Export')."
         },
-        "description": {
+        "details": {
           "type": "string",
-          "description": "A detailed, human-readable description of the action that occurred."
+          "description": "A descriptive text providing context for the action."
         },
         "oldValue": {
           "type": "string",
-          "description": "The value or state of relevant data before the action, typically stored as a stringified representation (e.g., old interest rate, old status)."
+          "description": "A JSON string representation of the data state before the action, if applicable. (e.g., old rate, old status)"
         },
         "newValue": {
           "type": "string",
-          "description": "The value or state of relevant data after the action, typically stored as a stringified representation (e.g., new interest rate, new status)."
+          "description": "A JSON string representation of the data state after the action, if applicable. (e.g., new rate, new status)"
         },
-        "reason": {
+        "userId": {
           "type": "string",
-          "description": "Optional: A user-provided reason or justification for certain actions, such as an interest rate change."
+          "description": "Reference to the user who performed the action. (Relationship: User 1:N AuditEntry)"
         }
       },
       "required": [
         "id",
         "loanId",
-        "userId",
         "timestamp",
         "actionType",
-        "description"
-      ]
-    },
-    "JournalEntryLine": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "JournalEntryLine",
-      "type": "object",
-      "description": "Represents a single line item of a double-entry journal entry generated for a loan period, compatible with Odoo ERP.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the JournalEntryLine entity."
-        },
-        "loanId": {
-          "type": "string",
-          "description": "Reference to the parent Loan entity for which this journal entry line was generated. (Relationship: Loan 1:N JournalEntryLine)"
-        },
-        "periodNumber": {
-          "type": "number",
-          "description": "The amortization period number to which this journal entry line pertains. (Relationship: AmortizationSchedulePeriod 1:N JournalEntryLine)"
-        },
-        "entryType": {
-          "type": "string",
-          "description": "The logical type of journal entry this line belongs to (e.g., 'Accrual Entry', 'Payment Entry')."
-        },
-        "journal": {
-          "type": "string",
-          "description": "The name or code of the accounting journal where this entry is recorded (e.g., 'General Ledger')."
-        },
-        "date": {
-          "type": "string",
-          "description": "The date of the journal entry line.",
-          "format": "date-time"
-        },
-        "reference": {
-          "type": "string",
-          "description": "A descriptive reference text for the journal entry line, e.g., 'Loan Amortization Period X Accrual'."
-        },
-        "accountCode": {
-          "type": "string",
-          "description": "The general ledger account code affected by this entry (e.g., '6110 Interest Expense')."
-        },
-        "accountName": {
-          "type": "string",
-          "description": "The descriptive name of the account (e.g., 'Interest Expense')."
-        },
-        "debit": {
-          "type": "number",
-          "description": "The debit amount for this journal entry line. Will be 0 if the entry is a credit."
-        },
-        "credit": {
-          "type": "number",
-          "description": "The credit amount for this journal entry line. Will be 0 if the entry is a debit."
-        }
-      },
-      "required": [
-        "id",
-        "loanId",
-        "periodNumber",
-        "entryType",
-        "journal",
-        "date",
-        "reference",
-        "accountCode",
-        "accountName",
-        "debit",
-        "credit"
+        "details",
+        "userId"
       ]
     }
   },
@@ -257,82 +299,102 @@
   "firestore": {
     "structure": [
       {
-        "path": "loans/{loanId}",
+        "path": "/loans/{loanId}",
         "definition": {
           "entityName": "Loan",
           "schema": {
             "$ref": "#/backend/entities/Loan"
           },
-          "description": "Stores core loan parameters and references its owner via the 'userId' field. All subcollections for this loan will denormalize this 'userId' for authorization independence.",
+          "description": "Stores core loan parameters. Includes `userId` for direct ownership-based authorization.",
           "params": [
             {
               "name": "loanId",
-              "description": "The unique identifier for a specific loan."
+              "description": "Unique identifier for the Loan document."
             }
           ]
         }
       },
       {
-        "path": "loans/{loanId}/schedule/{periodNumber}",
+        "path": "/loans/{loanId}/schedule/{periodNumber}",
         "definition": {
-          "entityName": "AmortizationSchedulePeriod",
+          "entityName": "AmortizationPeriod",
           "schema": {
-            "$ref": "#/backend/entities/AmortizationSchedulePeriod"
+            "$ref": "#/backend/entities/AmortizationPeriod"
           },
-          "description": "Stores a single period of the loan's amortization schedule. Includes denormalized 'userId' from the parent loan for robust authorization independence and simplified security rules.",
+          "description": "Stores a single period's amortization details. Includes denormalized `userId` (loan owner's ID) for authorization independence.",
           "params": [
             {
               "name": "loanId",
-              "description": "The unique identifier for the parent loan."
+              "description": "Unique identifier for the parent Loan document."
             },
             {
               "name": "periodNumber",
-              "description": "The sequential number identifying the amortization period."
+              "description": "The sequential number of the amortization period, serving as the document ID."
             }
           ]
         }
       },
       {
-        "path": "loans/{loanId}/auditTrail/{entryId}",
+        "path": "/loans/{loanId}/interestRateChanges/{changeId}",
+        "definition": {
+          "entityName": "InterestRateChange",
+          "schema": {
+            "$ref": "#/backend/entities/InterestRateChange"
+          },
+          "description": "Stores historical records of interest rate changes for a loan. Includes denormalized `loanOwnerUserId` (loan owner's ID) for authorization independence, in addition to `changedByUserId` (the actor).",
+          "params": [
+            {
+              "name": "loanId",
+              "description": "Unique identifier for the parent Loan document."
+            },
+            {
+              "name": "changeId",
+              "description": "Unique identifier for the InterestRateChange document."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/loans/{loanId}/journalEntries/{entryId}",
+        "definition": {
+          "entityName": "JournalEntry",
+          "schema": {
+            "$ref": "#/backend/entities/JournalEntry"
+          },
+          "description": "Stores generated journal entries for specific periods of a loan. Includes denormalized `userId` (loan owner's ID) for authorization independence.",
+          "params": [
+            {
+              "name": "loanId",
+              "description": "Unique identifier for the parent Loan document."
+            },
+            {
+              "name": "entryId",
+              "description": "Unique identifier for the JournalEntry document."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/loans/{loanId}/auditTrail/{entryId}",
         "definition": {
           "entityName": "AuditEntry",
           "schema": {
             "$ref": "#/backend/entities/AuditEntry"
           },
-          "description": "Logs every significant action related to a specific loan. The 'userId' field is explicitly included in the schema, enabling direct authorization checks and ensuring audit trail immutability and ownership.",
+          "description": "Stores immutable audit logs for actions related to a loan. Includes denormalized `loanOwnerUserId` (loan owner's ID) for authorization independence, in addition to `userId` (the actor).",
           "params": [
             {
               "name": "loanId",
-              "description": "The unique identifier for the parent loan."
+              "description": "Unique identifier for the parent Loan document."
             },
             {
               "name": "entryId",
-              "description": "The unique identifier for an audit log entry."
-            }
-          ]
-        }
-      },
-      {
-        "path": "loans/{loanId}/journalEntries/{journalEntryLineId}",
-        "definition": {
-          "entityName": "JournalEntryLine",
-          "schema": {
-            "$ref": "#/backend/entities/JournalEntryLine"
-          },
-          "description": "Contains individual journal entry lines generated for a loan period. Includes denormalized 'userId' from the parent loan for robust authorization independence, supporting direct Odoo export and reconciliation.",
-          "params": [
-            {
-              "name": "loanId",
-              "description": "The unique identifier for the parent loan."
-            },
-            {
-              "name": "journalEntryLineId",
-              "description": "The unique identifier for a journal entry line."
+              "description": "Unique identifier for the AuditEntry document."
             }
           ]
         }
       }
     ],
-    "reasoning": "The Firestore structure is designed to adhere strictly to the core design principles, prioritizing Authorization Independence, Clarity of Intent, DBAC, and QAPs. The primary design choice places each user's loans in a top-level collection `loans/{loanId}`, where the `Loan` document itself contains the `userId`. This directly supports the requirement for users to only access their own loans.\n\n**Authorization Independence (Critical Denormalization):**\nTo achieve Authorization Independence and avoid costly, complex `get()` calls in Firestore Security Rules, the `userId` of the parent `Loan` document will be denormalized and copied into every document within its subcollections: `schedule` (AmortizationSchedulePeriod) and `journalEntries` (JournalEntryLine). The `auditTrail` (AuditEntry) entity already includes `userId`, making it inherently authorization-independent. This strategy ensures that security rules for any document (Loan, Schedule Period, Journal Entry, Audit Entry) can be evaluated atomically by simply checking `request.auth.uid == resource.data.userId`, without needing to read parent documents. This is crucial for robust security, simplifies debugging, and enables atomic batch writes (e.g., creating a loan and its entire schedule).\n\n**QAPs (Queryable Access Patterns):**\nThis structure directly supports efficient and secure Queryable Access Patterns (QAPs). For the `loans` collection, a user can query `db.collection('loans').where('userId', '==', auth.currentUser.uid)` to retrieve only their own loans. Similarly, for subcollections like `schedule`, the denormalized `userId` allows for direct security rules (`allow read, write: if request.auth.uid == resource.data.userId;`). While application code would typically filter subcollections by the `loanId` (e.g., `db.collection('loans').doc(loanId).collection('schedule')`), the underlying security rule relies on the `userId` within *each* schedule document, ensuring that even if `loanId` were somehow compromised, the `userId` check would still enforce correct ownership. This eliminates the need for rules to `get()` the parent `loan` document to verify `userId`, thus supporting secure `list` operations without relying on rules as filters. Each collection maintains a homogeneous security posture (user-owned data), further simplifying rules and ensuring predictable access patterns."
+    "reasoning": "The Firestore structure for IFRS LoanGuard prioritizes security, scalability, and debuggability by adhering to core design principles, especially Authorization Independence and Query Against Paths (QAPs).\n\n**Authorization Independence via Denormalization:**\nTo achieve critical Authorization Independence, the design meticulously denormalizes the `userId` (representing the loan owner) into every document that is logically owned by or associated with a specific loan. This eliminates the need for expensive and complex `get()` calls within Firestore Security Rules, which would otherwise be required to check a parent document's `userId`. Instead, authorization rules can perform atomic checks directly on the `resource.data` of the document being accessed. For instance:\n1.  **`/loans/{loanId}`:** The `Loan` document itself inherently contains the `userId` of its owner.\n2.  **`/loans/{loanId}/schedule/{periodNumber}` (`AmortizationPeriod`) and `/loans/{loanId}/journalEntries/{entryId}` (`JournalEntry`):** These subcollection documents, while logically children of a `Loan`, do not originally include the loan owner's `userId`. To ensure Authorization Independence, a `userId` field, representing the loan owner, is explicitly added to these documents.\n3.  **`/loans/{loanId}/interestRateChanges/{changeId}` (`InterestRateChange`) and `/loans/{loanId}/auditTrail/{entryId}` (`AuditEntry`):** These entities already define a `userId` or `changedByUserId` field, which signifies the *actor* who performed the action. To avoid ambiguity and explicitly represent the *loan owner* for authorization purposes, a new field, `loanOwnerUserId`, is added to these documents. This clear distinction allows rules to verify `request.auth.uid` against the loan's owner without confusion with the action's performer. \nThis denormalization strategy ensures that a user's ownership can be verified directly on any document, simplifying security rules to `request.auth.uid == resource.data.userId` (or `loanOwnerUserId`), making them highly robust, performant, and easily debuggable.\n\n**Support for Query Against Paths (QAPs):**\nThe structural design, coupled with denormalized authorization fields, fully supports QAPs, ensuring secure and efficient list operations:\n1.  **Top-Level Queries (`/loans`):** Users can directly query for all loans they own by filtering on the `userId` field: `db.collection('loans').where('userId', '==', request.auth.uid)`. This query pattern is highly optimized by Firestore (requiring an index on `userId`) and is inherently secure because the security rules enforce `resource.data.userId == request.auth.uid` for every document returned, preventing unauthorized access.\n2.  **Subcollection Queries:** Once a user has identified a `loanId` they own (e.g., from a secure top-level query), they can then query its subcollections (e.g., `db.collection('loans').doc(loanId).collection('schedule')`). Even in these nested contexts, the presence of the denormalized `userId` (or `loanOwnerUserId`) in *every subcollection document* provides an additional layer of explicit security. This means that if a user somehow attempts to bypass the parent loan's authorization and directly queries a subcollection document with an `loanId` they don't own, the security rule for that subcollection document would independently fail the `resource.data.userId == request.auth.uid` check. This prevents data leakage and ensures that all `list` operations, whether on top-level collections or subcollections, are implicitly or explicitly filtered and secured by the authenticated user's UID.\n\n**Structural Segregation and Consistency:**\nAll data within the `loans` collection and its subcollections shares a homogeneous security posture: ownership by a single user. This eliminates the need for complex conditional logic in rules based on data types or public/private flags within the same collection. The use of descriptive wildcards (e.g., `{loanId}`, `{periodNumber}`, `{changeId}`, `{entryId}`) and standardized authorization field names ensures clarity and predictability across the data model."
   }
 }

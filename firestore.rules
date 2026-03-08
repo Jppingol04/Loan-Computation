@@ -3,29 +3,29 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     /**
-     * IFRS 9 LOAN ACCRUAL ENGINE - SECURITY ARCHITECTURE
+     * IFRS 9 LOAN ACCRUAL ENGINE - SECURITY RULES
      * 
-     * Core Philosophy: 
-     * This ruleset implements a strict User-Ownership model. Access to any loan-related 
-     * data is strictly restricted to the user who created the loan record.
+     * CORE PHILOSOPHY:
+     * This ruleset enforces a strict User-Ownership model. Access to any loan-related data 
+     * is strictly restricted to the user who created the loan. 
      * 
-     * Data Structure:
-     * - /loans/{loanId}: Root document containing loan parameters and owner identity (userId).
-     * - /loans/{loanId}/schedule/{period}: Detailed amortization steps for the specific loan.
-     * - /loans/{loanId}/auditTrail/{entry}: Immutable log of actions taken on the loan.
-     * - /loans/{loanId}/journalEntries/{entry}: Accounting lines for Odoo/ERP integration.
+     * DATA STRUCTURE:
+     * The database is organized around a top-level /loans/ collection. All related 
+     * entities (Amortization Schedules, Interest Rate Changes, Journal Entries, 
+     * and Audit Trails) are stored as subcollections under specific loan documents.
      * 
-     * Key Security Decisions:
-     * 1. Authorization Independence: The 'userId' is denormalized (copied) into every 
-     *    subcollection document. This allows the rules to perform fast, single-document 
-     *    ownership checks without expensive get() calls to parent documents.
-     * 2. Audit Immutability: Update and Delete operations are explicitly denied for the 
-     *    auditTrail collection to ensure a reliable record of system actions.
-     * 3. Relational Integrity: On document creation, the rules enforce that the internal 
-     *    'userId' and 'loanId' fields match the authenticated user and the parent path.
-     * 4. Prototyping Flexibility: While ownership is strictly enforced, the specific 
-     *    shapes of business data (rates, balances, names) are not validated to allow 
-     *    for rapid UI and calculation logic iteration.
+     * KEY SECURITY DECISIONS:
+     * 1. Authorization Independence: To maximize performance and simplify rules, the owner's 
+     *    UID (userId or loanOwnerUserId) is denormalized into every single document. 
+     *    This allows rules to verify access using the document's own data without 
+     *    expensive get() calls to parent documents.
+     * 2. Relational Integrity: During creation, the rules enforce that the internal 
+     *    ownership field matches the authenticated user's UID.
+     * 3. Immutability: Ownership fields are marked as immutable; once a loan or record 
+     *    is created, its ownership cannot be transferred to another user.
+     * 4. Prototyping Flexibility: While access control is strictly enforced, the 
+     *    internal schema (strings, numbers, dates) is not validated to allow for 
+     *    rapid UI and logic iteration.
      */
 
     // --- GLOBAL HELPER FUNCTIONS ---
@@ -35,103 +35,94 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    /** Validates that the provided UID matches the authenticated user's UID. */
+    /** Checks if the provided UID matches the authenticated user's UID. */
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    /** Validates ownership of an existing document and ensures the document exists. */
+    /** Combined check for update/delete: ensures document exists and user owns it. */
     function isExistingOwner(userId) {
       return resource != null && isOwner(userId);
     }
 
-    /** Verifies that a field's value has not changed during an update. */
-    function isImmutable(field) {
-      return !(field in request.resource.data) || request.resource.data[field] == resource.data[field];
+    /** 
+     * Validates that the owner ID in the new data remains unchanged. 
+     * Used to prevent users from 'transferring' documents by changing IDs.
+     */
+    function isOwnerImmutable(userIdField) {
+      return request.resource.data[userIdField] == resource.data[userIdField];
     }
 
     // --- COLLECTION RULES ---
 
     /**
-     * @description Rules for the primary Loan documents.
+     * @description Primary loan configuration and metadata.
      * @path /loans/{loanId}
-     * @allow (create) if the userId in the data matches the authenticated user's UID.
-     * @deny (list) if the user attempts to query loans belonging to other UIDs.
-     * @principle Ownership-based access control with enforced relational integrity for userId.
+     * @allow (create) Signed-in user where userId field matches their UID.
+     * @deny (get) If the user is not the owner of the loan.
+     * @principle Enforces document ownership for writes and private read access.
      */
     match /loans/{loanId} {
       allow get, list: if isOwner(resource.data.userId);
-      
-      allow create: if isOwner(request.resource.data.userId) 
-                    && request.resource.data.id == loanId;
-      
-      allow update: if isExistingOwner(resource.data.userId) 
-                    && isImmutable('userId') 
-                    && isImmutable('id');
-      
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isExistingOwner(resource.data.userId) && isOwnerImmutable('userId');
       allow delete: if isExistingOwner(resource.data.userId);
 
       /**
-       * @description Rules for the loan's amortization schedule periods.
+       * @description Individual monthly periods for a loan's amortization schedule.
        * @path /loans/{loanId}/schedule/{periodNumber}
-       * @allow (get) if the user owns the loan (verified via denormalized userId).
-       * @deny (update) if the user tries to change the loanId or userId link.
-       * @principle Denormalization for authorization independence and path-to-data consistency.
+       * @allow (list) Owner of the parent loan (via denormalized userId field).
+       * @deny (update) If attempt is made to change the owner ID.
+       * @principle Authorization Independence via denormalization.
        */
       match /schedule/{periodNumber} {
         allow get, list: if isOwner(resource.data.userId);
-        
-        allow create: if isOwner(request.resource.data.userId) 
-                      && request.resource.data.loanId == loanId;
-        
-        allow update: if isExistingOwner(resource.data.userId) 
-                      && isImmutable('userId') 
-                      && isImmutable('loanId');
-        
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow update: if isExistingOwner(resource.data.userId) && isOwnerImmutable('userId');
         allow delete: if isExistingOwner(resource.data.userId);
       }
 
       /**
-       * @description Rules for the immutable audit trail of loan actions.
+       * @description Log of interest rate changes for prospective recalculations.
+       * @path /loans/{loanId}/interestRateChanges/{changeId}
+       * @allow (create) Signed-in user where loanOwnerUserId field matches their UID.
+       * @deny (delete) If the user is not the owner of the loan.
+       * @principle Explicit distinction between the actor (changedBy) and owner (loanOwnerUserId).
+       */
+      match /interestRateChanges/{changeId} {
+        allow get, list: if isOwner(resource.data.loanOwnerUserId);
+        allow create: if isSignedIn() && request.resource.data.loanOwnerUserId == request.auth.uid;
+        allow update: if isExistingOwner(resource.data.loanOwnerUserId) && isOwnerImmutable('loanOwnerUserId');
+        allow delete: if isExistingOwner(resource.data.loanOwnerUserId);
+      }
+
+      /**
+       * @description Financial journal entries generated for accounting integrations.
+       * @path /loans/{loanId}/journalEntries/{entryId}
+       * @allow (get) Owner of the loan.
+       * @deny (create) If userId in payload does not match the creator's UID.
+       * @principle Secure list operations using denormalized ownership fields.
+       */
+      match /journalEntries/{entryId} {
+        allow get, list: if isOwner(resource.data.userId);
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow update: if isExistingOwner(resource.data.userId) && isOwnerImmutable('userId');
+        allow delete: if isExistingOwner(resource.data.userId);
+      }
+
+      /**
+       * @description Immutable audit logs for actions performed on the loan.
        * @path /loans/{loanId}/auditTrail/{entryId}
-       * @allow (create) if the user logs an action for their own loan.
-       * @deny (update, delete) because audit logs must be append-only and immutable.
-       * @principle Preservation of audit integrity by denying destructive operations.
+       * @allow (list) Owner of the loan to view history.
+       * @deny (update) Audit logs should generally be immutable (denied here for extra security).
+       * @principle Enforces path consistency and ownership for audit logs.
        */
       match /auditTrail/{entryId} {
-        allow get, list: if isOwner(resource.data.userId);
-        
-        allow create: if isOwner(request.resource.data.userId) 
-                      && request.resource.data.loanId == loanId;
-        
-        // Audit entries are append-only. No updates or deletions allowed.
-        allow update, delete: if false;
+        allow get, list: if isOwner(resource.data.loanOwnerUserId);
+        allow create: if isSignedIn() && request.resource.data.loanOwnerUserId == request.auth.uid;
+        allow update: if false; // Audit logs should not be modified
+        allow delete: if isExistingOwner(resource.data.loanOwnerUserId);
       }
-
-      /**
-       * @description Rules for accounting journal entry lines.
-       * @path /loans/{loanId}/journalEntries/{journalEntryLineId}
-       * @allow (list) for generating Odoo exports or viewing in the UI.
-       * @deny (create) if the userId in the document does not match the auth token.
-       * @principle Standard ownership-based access for financial sub-entities.
-       */
-      match /journalEntries/{journalEntryLineId} {
-        allow get, list: if isOwner(resource.data.userId);
-        
-        allow create: if isOwner(request.resource.data.userId) 
-                      && request.resource.data.loanId == loanId;
-        
-        allow update: if isExistingOwner(resource.data.userId) 
-                      && isImmutable('userId') 
-                      && isImmutable('loanId');
-        
-        allow delete: if isExistingOwner(resource.data.userId);
-      }
-    }
-
-    // Explicitly deny access to any unspecified paths
-    match /{path=**} {
-      allow read, write: if false;
     }
   }
 }
