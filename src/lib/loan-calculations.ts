@@ -36,54 +36,56 @@ export interface LoanInput {
   manualPayments?: ManualPayment[];
 }
 
-export function calculateMonthlyPayment(principal: number, annualRate: number, termInMonths: number): number {
-  const r = annualRate / 12 / 100;
-  if (r === 0) return principal / termInMonths;
-  const pmt = (principal * r * Math.pow(1 + r, termInMonths)) / (Math.pow(1 + r, termInMonths) - 1);
-  return Number(pmt.toFixed(2));
-}
-
 export function generateAmortizationSchedule(input: LoanInput): AmortizationPeriod[] {
   const schedule: AmortizationPeriod[] = [];
-  const { principalAmount, annualInterestRate, termInMonths, startDate, drawdowns = [], manualPayments = [] } = input;
-  const monthlyRate = annualInterestRate / 12 / 100;
-
-  let currentBalance = principalAmount;
+  const { 
+    principalAmount, 
+    annualInterestRate, 
+    termInMonths, 
+    startDate, 
+    drawdowns = [], 
+    manualPayments = [] 
+  } = input;
+  
+  const monthlyRate = (annualInterestRate || 0) / 12 / 100;
+  let currentBalance = principalAmount || 0;
   let cumulativeInterest = 0;
-  const start = new Date(startDate);
+  
+  // Parse start date safely
+  const start = new Date(startDate || new Date().toISOString());
 
-  for (let i = 1; i <= termInMonths; i++) {
-    // Determine the end of the current period (last day of the month)
+  for (let i = 1; i <= (termInMonths || 1); i++) {
+    // Current period end date (last day of the month)
     const periodEndDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
     const dateStr = periodEndDate.toISOString().split('T')[0];
 
-    // Determine the start of the current period for filtering drawdowns
-    const periodStartDate = i === 1 
-      ? new Date(startDate) 
-      : new Date(start.getFullYear(), start.getMonth() + i - 1, 1);
+    // Current period start date
+    const periodStartDate = new Date(start.getFullYear(), start.getMonth() + i - 1, 1);
 
-    // Calculate drawdowns that occurred within this specific period window
+    // Calculate drawdowns in this window
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = new Date(d.date);
       return dDate >= periodStartDate && dDate <= periodEndDate;
     });
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
     
-    // Accrue interest based on balance after drawdowns
+    // Accrue interest on the balance *after* drawdowns are applied
     const balanceForInterest = currentBalance + drawdownAmount;
     const interestAccrual = Number((balanceForInterest * monthlyRate).toFixed(2));
     
+    // Look for manual payment inputs for this period
     const manualPmt = manualPayments.find(p => p.periodNumber === i);
-    const principalPaid = manualPmt?.principalAmount || 0;
-    const interestPaid = manualPmt?.interestAmount || 0;
+    let principalPaid = manualPmt?.principalAmount || 0;
+    let interestPaid = manualPmt?.interestAmount || 0;
 
-    // Repay everything at the final bullet maturity if not manually handled
-    let finalPrincipalPaid = principalPaid;
+    // Bullet Repayment Logic: 
+    // Repay everything (principal + any un-repaid accrued interest) at final maturity
+    // unless manual payments are provided.
     if (i === termInMonths && principalPaid === 0) {
-      finalPrincipalPaid = balanceForInterest;
+      principalPaid = balanceForInterest;
     }
 
-    const closingBalance = Number((balanceForInterest + interestAccrual - finalPrincipalPaid - interestPaid).toFixed(2));
+    const closingBalance = Number((balanceForInterest + interestAccrual - principalPaid - interestPaid).toFixed(2));
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
     schedule.push({
@@ -92,7 +94,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       openingBalance: Number(currentBalance.toFixed(2)),
       drawdownAmount,
       interestAccrual,
-      principalPaid: finalPrincipalPaid,
+      principalPaid,
       interestPaid,
       closingBalance: Math.max(0, closingBalance),
       cumulativeInterest,
@@ -110,27 +112,31 @@ export function recalculateProspectively(
   effectivePeriod: number,
   newAnnualRate: number
 ): AmortizationPeriod[] {
+  if (!existingSchedule.length) return [];
+  
   const periodIndex = effectivePeriod - 1;
-  const preservedPeriods = existingSchedule.slice(0, periodIndex);
+  const preservedPeriods = existingSchedule.slice(0, Math.max(0, periodIndex));
   const targetPeriod = existingSchedule[periodIndex];
   
   if (!targetPeriod) return existingSchedule;
 
-  const monthlyRate = newAnnualRate / 12 / 100;
+  const monthlyRate = (newAnnualRate || 0) / 12 / 100;
   const updatedSchedule = [...preservedPeriods];
   let currentBalance = targetPeriod.openingBalance;
+  
   let cumulativeInterest = preservedPeriods.length > 0 
     ? preservedPeriods[preservedPeriods.length - 1].cumulativeInterest 
     : 0;
 
   for (let i = effectivePeriod; i <= existingSchedule.length; i++) {
     const periodData = existingSchedule[i-1];
-    const interestAccrual = Number(((currentBalance + periodData.drawdownAmount) * monthlyRate).toFixed(2));
+    const balanceForInterest = currentBalance + periodData.drawdownAmount;
+    const interestAccrual = Number((balanceForInterest * monthlyRate).toFixed(2));
     
     const principalPaid = periodData.principalPaid;
     const interestPaid = periodData.interestPaid;
 
-    const closingBalance = Number((currentBalance + periodData.drawdownAmount + interestAccrual - principalPaid - interestPaid).toFixed(2));
+    const closingBalance = Number((balanceForInterest + interestAccrual - principalPaid - interestPaid).toFixed(2));
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
     updatedSchedule.push({
