@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,23 +9,20 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Calculator, Table as TableIcon, TrendingDown, BookOpen, History, Download, RefreshCw, CheckCircle2, AlertCircle, Sparkles, Plus, Trash2, XCircle } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Calculator, Table as TableIcon, Download, RefreshCw, CheckCircle2, Sparkles, Plus, Trash2, XCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { 
   LoanInput, 
   AmortizationPeriod, 
-  Drawdown,
   generateAmortizationSchedule, 
   recalculateProspectively 
 } from '@/lib/loan-calculations';
 import { 
   downloadCSV, 
-  generateAmortizationCSV, 
-  generateOdooJournalCSV 
+  generateAmortizationCSV 
 } from '@/lib/export-utils';
 import { aiPoweredLoanInsights, AiAnalysisOutput } from '@/ai/flows/ai-powered-loan-insights';
 
@@ -36,7 +33,7 @@ export default function LoanEngineDashboard() {
     principalAmount: 1000000,
     annualInterestRate: 4.2,
     termInMonths: 24,
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: '2025-01-01',
     currency: 'USD',
     drawdowns: [],
     manualPayments: []
@@ -48,13 +45,10 @@ export default function LoanEngineDashboard() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('setup');
 
-  // Drawdown management
   const [newDrawdown, setNewDrawdown] = useState({ date: '', amount: 0 });
 
-  // Prospective Recalculation Modal State
   const [recalcRate, setRecalcRate] = useState(5.0);
   const [recalcPeriod, setRecalcPeriod] = useState(1);
-  const [recalcReason, setRecalcReason] = useState('Benchmark rate increase');
   const [isRecalcOpen, setIsRecalcOpen] = useState(false);
 
   useEffect(() => {
@@ -76,7 +70,7 @@ export default function LoanEngineDashboard() {
   const handleGenerateSchedule = (showToast = true) => {
     const newSchedule = generateAmortizationSchedule(loanInput);
     setSchedule(newSchedule);
-    logAudit('Schedule Updated', `Loan model recomputed with drawdowns and manual parameters.`);
+    logAudit('Schedule Updated', `Loan model recomputed for ${loanInput.loanName} starting ${loanInput.startDate}.`);
     if (showToast) toast({ title: "Schedule Recomputed", description: "Bullet repayment model updated." });
   };
 
@@ -99,7 +93,7 @@ export default function LoanEngineDashboard() {
     const updatedDrawdowns = [...(loanInput.drawdowns || []), { id: Math.random().toString(36).substr(2, 9), ...newDrawdown }];
     setLoanInput({ ...loanInput, drawdowns: updatedDrawdowns });
     setNewDrawdown({ date: '', amount: 0 });
-    toast({ title: "Drawdown Added", description: "Principal will be updated upon schedule refresh." });
+    toast({ title: "Drawdown Added", description: "Refresh the schedule to apply new principal." });
   };
 
   const removeDrawdown = (id: string) => {
@@ -123,7 +117,7 @@ export default function LoanEngineDashboard() {
         termInMonths: loanInput.termInMonths,
         startDate: loanInput.startDate,
         currency: loanInput.currency,
-        monthlyPayment: 0, // Not applicable in bullet
+        monthlyPayment: 0,
         totalInterest: schedule.reduce((acc, curr) => acc + curr.interestAccrual, 0),
         totalPayable: loanInput.principalAmount + (loanInput.drawdowns?.reduce((a,b) => a+b.amount, 0) || 0) + schedule.reduce((acc, curr) => acc + curr.interestAccrual, 0),
       };
@@ -209,6 +203,12 @@ export default function LoanEngineDashboard() {
                       <Input value={loanInput.loanName} onChange={e => setLoanInput({...loanInput, loanName: e.target.value})} />
                     </div>
                     <div className="space-y-2">
+                      <Label>Start Date</Label>
+                      <Input type="date" value={loanInput.startDate} onChange={e => setLoanInput({...loanInput, startDate: e.target.value})} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
                       <Label>Currency</Label>
                       <Select value={loanInput.currency} onValueChange={v => setLoanInput({...loanInput, currency: v})}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -219,8 +219,6 @@ export default function LoanEngineDashboard() {
                         </SelectContent>
                       </Select>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Initial Principal</Label>
                       <Input type="number" value={loanInput.principalAmount} onChange={e => setLoanInput({...loanInput, principalAmount: Number(e.target.value)})} />
@@ -229,10 +227,10 @@ export default function LoanEngineDashboard() {
                       <Label>Annual Rate (%)</Label>
                       <Input type="number" step="0.1" value={loanInput.annualInterestRate} onChange={e => setLoanInput({...loanInput, annualInterestRate: Number(e.target.value)})} />
                     </div>
-                    <div className="space-y-2">
-                      <Label>Term (Months)</Label>
-                      <Input type="number" value={loanInput.termInMonths} onChange={e => setLoanInput({...loanInput, termInMonths: Number(e.target.value)})} />
-                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Term (Months)</Label>
+                    <Input type="number" value={loanInput.termInMonths} onChange={e => setLoanInput({...loanInput, termInMonths: Number(e.target.value)})} />
                   </div>
                   <Button onClick={() => handleGenerateSchedule()} className="w-full mt-4">Generate / Refresh Schedule</Button>
                 </CardContent>
@@ -304,29 +302,34 @@ export default function LoanEngineDashboard() {
                   <CardTitle>Accrual & Payment Schedule</CardTitle>
                   <CardDescription>Manual bullet repayment model</CardDescription>
                 </div>
-                <Dialog open={isRecalcOpen} onOpenChange={setIsRecalcOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm"><RefreshCw className="h-4 w-4 mr-2" /> Prospective Rate Change</Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader><DialogTitle>Interest Rate Change</DialogTitle></DialogHeader>
-                    <div className="grid gap-4 py-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>New Annual Rate (%)</Label>
-                          <Input type="number" step="0.1" value={recalcRate} onChange={e => setRecalcRate(Number(e.target.value))} />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Effective Period</Label>
-                          <Input type="number" value={recalcPeriod} onChange={e => setRecalcPeriod(Number(e.target.value))} />
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => handleGenerateSchedule()}>
+                    <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+                  </Button>
+                  <Dialog open={isRecalcOpen} onOpenChange={setIsRecalcOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm">Prospective Rate Change</Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader><DialogTitle>Interest Rate Change</DialogTitle></DialogHeader>
+                      <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>New Annual Rate (%)</Label>
+                            <Input type="number" step="0.1" value={recalcRate} onChange={e => setRecalcRate(Number(e.target.value))} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Effective Period</Label>
+                            <Input type="number" value={recalcPeriod} onChange={e => setRecalcPeriod(Number(e.target.value))} />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <DialogFooter>
-                      <Button onClick={handleApplyRecalculation}>Recalculate Remaining</Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
+                      <DialogFooter>
+                        <Button onClick={handleApplyRecalculation}>Recalculate Remaining</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <ScrollArea className="h-[500px]">
@@ -342,7 +345,7 @@ export default function LoanEngineDashboard() {
                         <TableHead className="text-right">Pmt (Int)</TableHead>
                         <TableHead className="text-right">Closing</TableHead>
                         <TableHead className="text-center">Status</TableHead>
-                        <TableHead className="text-right">Cycle</TableHead>
+                        <TableHead className="text-right">Toggle</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>

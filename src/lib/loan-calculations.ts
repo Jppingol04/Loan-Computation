@@ -37,8 +37,6 @@ export interface LoanInput {
 }
 
 export function calculateMonthlyPayment(principal: number, annualRate: number, termInMonths: number): number {
-  // In a bullet loan, there is no "calculated" monthly payment requirement, 
-  // but we keep this for UI reference or comparative analysis.
   const r = annualRate / 12 / 100;
   if (r === 0) return principal / termInMonths;
   const pmt = (principal * r * Math.pow(1 + r, termInMonths)) / (Math.pow(1 + r, termInMonths) - 1);
@@ -55,34 +53,36 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   const start = new Date(startDate);
 
   for (let i = 1; i <= termInMonths; i++) {
-    const periodDate = new Date(start);
-    periodDate.setMonth(start.getMonth() + i);
-    periodDate.setDate(0); 
-    const dateStr = periodDate.toISOString().split('T')[0];
+    // Determine the end of the current period (last day of the month)
+    const periodEndDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
+    const dateStr = periodEndDate.toISOString().split('T')[0];
 
-    // Calculate drawdowns for this period
+    // Determine the start of the current period for filtering drawdowns
+    const periodStartDate = i === 1 
+      ? new Date(startDate) 
+      : new Date(start.getFullYear(), start.getMonth() + i - 1, 1);
+
+    // Calculate drawdowns that occurred within this specific period window
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = new Date(d.date);
-      return dDate > new Date(start.getTime() + (i-1)*30*24*60*60*1000) && dDate <= periodDate;
+      return dDate >= periodStartDate && dDate <= periodEndDate;
     });
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
     
-    // Add drawdown to balance before interest calculation
+    // Accrue interest based on balance after drawdowns
     const balanceForInterest = currentBalance + drawdownAmount;
     const interestAccrual = Number((balanceForInterest * monthlyRate).toFixed(2));
     
-    // Check for manual payments
     const manualPmt = manualPayments.find(p => p.periodNumber === i);
     const principalPaid = manualPmt?.principalAmount || 0;
     const interestPaid = manualPmt?.interestAmount || 0;
 
-    // In a bullet model, if it's the last period, we assume full repayment if not specified
+    // Repay everything at the final bullet maturity if not manually handled
     let finalPrincipalPaid = principalPaid;
     if (i === termInMonths && principalPaid === 0) {
       finalPrincipalPaid = balanceForInterest;
     }
 
-    const totalPayment = Number((finalPrincipalPaid + interestPaid).toFixed(2));
     const closingBalance = Number((balanceForInterest + interestAccrual - finalPrincipalPaid - interestPaid).toFixed(2));
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
@@ -110,16 +110,15 @@ export function recalculateProspectively(
   effectivePeriod: number,
   newAnnualRate: number
 ): AmortizationPeriod[] {
-  // Logic remains similar but adjusted for bullet nature
   const periodIndex = effectivePeriod - 1;
   const preservedPeriods = existingSchedule.slice(0, periodIndex);
   const targetPeriod = existingSchedule[periodIndex];
   
-  const remainingPrincipal = targetPeriod.openingBalance;
-  const monthlyRate = newAnnualRate / 12 / 100;
+  if (!targetPeriod) return existingSchedule;
 
+  const monthlyRate = newAnnualRate / 12 / 100;
   const updatedSchedule = [...preservedPeriods];
-  let currentBalance = remainingPrincipal;
+  let currentBalance = targetPeriod.openingBalance;
   let cumulativeInterest = preservedPeriods.length > 0 
     ? preservedPeriods[preservedPeriods.length - 1].cumulativeInterest 
     : 0;
@@ -128,7 +127,6 @@ export function recalculateProspectively(
     const periodData = existingSchedule[i-1];
     const interestAccrual = Number(((currentBalance + periodData.drawdownAmount) * monthlyRate).toFixed(2));
     
-    // Retain manual payments from original schedule if they were set
     const principalPaid = periodData.principalPaid;
     const interestPaid = periodData.interestPaid;
 
