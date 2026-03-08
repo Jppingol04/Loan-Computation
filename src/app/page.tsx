@@ -20,10 +20,9 @@ import {
   LoanInput, 
   AmortizationPeriod, 
   generateAmortizationSchedule, 
-  calculateMonthsBetween,
+  LoanStatus,
   Drawdown,
-  ManualPayment,
-  LoanStatus
+  ManualPayment
 } from '@/lib/loan-calculations';
 import { 
   downloadCSV, 
@@ -55,18 +54,12 @@ export default function LoanEngineDashboard() {
   const [yearFilter, setYearFilter] = useState<string>('all');
   const [newDrawdown, setNewDrawdown] = useState({ date: '', amount: 0 });
   const [newPayment, setNewPayment] = useState({ periodNumber: 1, principal: 0, interest: 0 });
-  const [maturityDate, setMaturityDate] = useState('');
   const [isImportOpen, setIsImportOpen] = useState(false);
 
-  // Dynamic computation of schedule
+  // Dynamic computation of schedule whenever input changes
   useEffect(() => {
     const newSchedule = generateAmortizationSchedule(loanInput);
     setSchedule(newSchedule);
-    
-    // Auto-update maturity date string for display
-    if (newSchedule.length > 0) {
-      setMaturityDate(newSchedule[newSchedule.length - 1].date);
-    }
   }, [loanInput]);
 
   const logAudit = (action: string, details: string) => {
@@ -82,7 +75,7 @@ export default function LoanEngineDashboard() {
   const refreshSchedule = () => {
     const newSchedule = generateAmortizationSchedule(loanInput);
     setSchedule(newSchedule);
-    toast({ title: "Schedule Refreshed", description: "Ledger has been re-computed based on current parameters." });
+    toast({ title: "Schedule Refreshed", description: "Ledger has been re-computed based on real dates." });
   };
 
   const handleAddDrawdown = () => {

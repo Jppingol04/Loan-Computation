@@ -40,11 +40,29 @@ export interface LoanInput {
   periodStatuses?: Record<number, LoanStatus>; // Map of periodNumber to override status
 }
 
+/**
+ * Parses a YYYY-MM-DD string into a Date object at midnight local time.
+ * Avoids UTC timezone shifts.
+ */
+function parseLocalDate(dateStr: string): Date {
+  if (!dateStr) return new Date();
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+/**
+ * Formats a Date object back to YYYY-MM-DD string.
+ */
+function toDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function calculateMonthsBetween(start: string, end: string): number {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return 12;
-  
+  const startDate = parseLocalDate(start);
+  const endDate = parseLocalDate(end);
   return (
     (endDate.getFullYear() - startDate.getFullYear()) * 12 +
     (endDate.getMonth() - startDate.getMonth())
@@ -52,9 +70,9 @@ export function calculateMonthsBetween(start: string, end: string): number {
 }
 
 /**
- * Generates an IFRS 9 EIR schedule.
- * Correctly carries forward balances by iterating through periods and aggregating
- * drawdowns and payments within those specific monthly windows.
+ * Generates an IFRS 9 schedule based on anniversary dates.
+ * If a loan starts on Jan 31st, subsequent months will fall on the 31st
+ * or the last day of the month if it's shorter (e.g., Feb 28th).
  */
 export function generateAmortizationSchedule(input: LoanInput): AmortizationPeriod[] {
   const schedule: AmortizationPeriod[] = [];
@@ -70,39 +88,55 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   } = input;
   
   const monthlyRate = (annualInterestRate || 0) / 12 / 100;
-  
-  // Parse start date safely
-  const start = new Date(startDate || new Date().toISOString());
+  const start = parseLocalDate(startDate);
+  const anchorDay = start.getDate();
 
-  // Aggregate drawdowns that happened BEFORE the first period starts
-  // (Historical catch-all for data before the start date)
-  const firstPeriodStart = new Date(start.getFullYear(), start.getMonth(), 1);
-  const initialDrawdowns = drawdowns.filter(d => new Date(d.date) < firstPeriodStart);
+  // Aggregate drawdowns that happened AT or BEFORE the exact start date as "Initial"
+  const initialDrawdowns = drawdowns.filter(d => {
+    const dDate = parseLocalDate(d.date);
+    return dDate <= start;
+  });
   const initialDrawdownAmount = initialDrawdowns.reduce((acc, d) => acc + d.amount, 0);
 
   let currentBalance = (principalAmount || 0) + initialDrawdownAmount;
   let cumulativeInterest = 0;
 
   for (let i = 1; i <= (termInMonths || 1); i++) {
-    // Current period end date (last day of the month)
-    const periodEndDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
-    const dateStr = periodEndDate.toISOString().split('T')[0];
+    // Calculate the anniversary date for this period
+    // new Date(y, m + i, d) handles overflows automatically.
+    // However, to mimic banking logic (e.g. 31st -> 28th), we need a check.
+    let targetDate = new Date(start.getFullYear(), start.getMonth() + i, anchorDay);
+    
+    // If we passed the intended month (e.g. Jan 31 -> March 3), snap to month end
+    if (targetDate.getDate() !== anchorDay) {
+      targetDate = new Date(start.getFullYear(), start.getMonth() + i + 1, 0);
+    }
+    
+    const dateStr = toDateString(targetDate);
 
-    // Current period start date
-    const periodStartDate = new Date(start.getFullYear(), start.getMonth() + i - 1, 1);
+    // Calculate the period window (Previous period end to current period end)
+    let prevPeriodEnd: Date;
+    if (i === 1) {
+      prevPeriodEnd = new Date(start);
+    } else {
+      prevPeriodEnd = new Date(start.getFullYear(), start.getMonth() + i - 1, anchorDay);
+      if (prevPeriodEnd.getDate() !== anchorDay) {
+        prevPeriodEnd = new Date(start.getFullYear(), start.getMonth() + i, 0);
+      }
+    }
 
-    // Calculate drawdowns in this specific window
+    // Filter drawdowns falling strictly within this month's window
     const periodDrawdowns = drawdowns.filter(d => {
-      const dDate = new Date(d.date);
-      return dDate >= periodStartDate && dDate <= periodEndDate;
+      const dDate = parseLocalDate(d.date);
+      return dDate > prevPeriodEnd && dDate <= targetDate;
     });
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
     
-    // Accrue interest on the balance AFTER drawdowns are applied for the period
+    // Interest accrues on the daily average balance or balance after drawdowns
+    // For this simple engine, we accrue on balance + period drawdowns
     const balanceForInterest = currentBalance + drawdownAmount;
     const interestAccrual = Number((balanceForInterest * monthlyRate).toFixed(2));
     
-    // Aggregate manual payments for this period
     const manualPmtList = manualPayments.filter(p => p.periodNumber === i);
     let principalPaid = manualPmtList.reduce((acc, p) => acc + p.principalAmount, 0);
     let interestPaid = manualPmtList.reduce((acc, p) => acc + p.interestAmount, 0);
@@ -115,7 +149,6 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     const closingBalance = Number((balanceForInterest + interestAccrual - principalPaid - interestPaid).toFixed(2));
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
-    // Determine Status: Manual overrides take precedence
     let status: LoanStatus = 'projected';
     if (periodStatuses[i]) {
       status = periodStatuses[i];
@@ -136,7 +169,6 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       status,
     });
 
-    // Carry balance forward to next month
     currentBalance = closingBalance;
   }
 
