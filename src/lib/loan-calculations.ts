@@ -7,9 +7,11 @@ export interface Drawdown {
 }
 
 export interface ManualPayment {
+  id: string;
   periodNumber: number;
   principalAmount: number;
   interestAmount: number;
+  date?: string; // Optional metadata
 }
 
 export interface AmortizationPeriod {
@@ -32,7 +34,7 @@ export interface LoanInput {
   termInMonths: number;
   startDate: string;
   currency: string;
-  isBullet: boolean; // Whether to automatically repay principal at maturity
+  isBullet: boolean; // Whether to automatically repay remaining principal at maturity
   drawdowns?: Drawdown[];
   manualPayments?: ManualPayment[];
 }
@@ -87,12 +89,12 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     const interestAccrual = Number((balanceForInterest * monthlyRate).toFixed(2));
     
     // Look for manual payment inputs for this period
-    const manualPmt = manualPayments.find(p => p.periodNumber === i);
-    let principalPaid = manualPmt?.principalAmount || 0;
-    let interestPaid = manualPmt?.interestAmount || 0;
+    const manualPmtList = manualPayments.filter(p => p.periodNumber === i);
+    let principalPaid = manualPmtList.reduce((acc, p) => acc + p.principalAmount, 0);
+    let interestPaid = manualPmtList.reduce((acc, p) => acc + p.interestAmount, 0);
 
     // Bullet Repayment Logic: 
-    // Repay everything (principal + any un-repaid accrued interest) at final maturity if isBullet is true
+    // Only applies if no manual principal payment exists for the final period
     if (i === termInMonths && isBullet && principalPaid === 0) {
       principalPaid = balanceForInterest + interestAccrual;
     }
@@ -110,7 +112,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       interestPaid,
       closingBalance: Math.max(0, closingBalance),
       cumulativeInterest,
-      status: 'projected',
+      status: manualPmtList.length > 0 ? 'paid' : 'projected',
     });
 
     currentBalance = closingBalance;
