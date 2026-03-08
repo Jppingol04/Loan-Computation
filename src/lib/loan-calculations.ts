@@ -32,8 +32,20 @@ export interface LoanInput {
   termInMonths: number;
   startDate: string;
   currency: string;
+  isBullet: boolean; // Whether to automatically repay principal at maturity
   drawdowns?: Drawdown[];
   manualPayments?: ManualPayment[];
+}
+
+export function calculateMonthsBetween(start: string, end: string): number {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return 12;
+  
+  return (
+    (endDate.getFullYear() - startDate.getFullYear()) * 12 +
+    (endDate.getMonth() - startDate.getMonth())
+  );
 }
 
 export function generateAmortizationSchedule(input: LoanInput): AmortizationPeriod[] {
@@ -43,6 +55,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     annualInterestRate, 
     termInMonths, 
     startDate, 
+    isBullet,
     drawdowns = [], 
     manualPayments = [] 
   } = input;
@@ -79,10 +92,9 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     let interestPaid = manualPmt?.interestAmount || 0;
 
     // Bullet Repayment Logic: 
-    // Repay everything (principal + any un-repaid accrued interest) at final maturity
-    // unless manual payments are provided.
-    if (i === termInMonths && principalPaid === 0) {
-      principalPaid = balanceForInterest;
+    // Repay everything (principal + any un-repaid accrued interest) at final maturity if isBullet is true
+    if (i === termInMonths && isBullet && principalPaid === 0) {
+      principalPaid = balanceForInterest + interestAccrual;
     }
 
     const closingBalance = Number((balanceForInterest + interestAccrual - principalPaid - interestPaid).toFixed(2));
