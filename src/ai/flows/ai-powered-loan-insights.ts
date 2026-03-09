@@ -81,13 +81,9 @@ Term: {{{loanSummary.termInMonths}}} months
 
 Note: This is a DRAWDOWN facility. Principal increases when funds are drawn and typically matures as a bullet payment.
 
-Amortization Schedule Context:
+Amortization Schedule Context (first 5 periods):
 {{#each amortizationSchedule}}
-  {{#if @index}}
-    {{#if (lt @index 5)}}
 Period {{periodNumber}}: Drawdown={{drawdownAmount}}, Int Accrual={{interestAccrual}}, Bal={{closingBalance}}
-    {{/if}}
-  {{/if}}
 {{/each}}
 
 Based on this:
@@ -104,7 +100,12 @@ const aiPoweredLoanInsightsFlow = ai.defineFlow(
     outputSchema: AiAnalysisOutputSchema,
   },
   async (input) => {
-    const { output } = await prompt(input);
+    // Pass only a subset of the schedule to the AI to save tokens and focus the analysis.
+    const analysisInput = {
+      ...input,
+      amortizationSchedule: input.amortizationSchedule.slice(0, 5),
+    };
+    const { output } = await prompt(analysisInput);
     return output!;
   }
 );
