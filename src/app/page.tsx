@@ -2,11 +2,11 @@
 "use client"
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { collection, doc, writeBatch, serverTimestamp, getDocs, deleteDoc } from 'firebase/firestore';
+import { collection, doc, writeBatch, serverTimestamp, getDocs, deleteDoc, query, where } from 'firebase/firestore';
 import { signInAnonymously, signOut } from 'firebase/auth';
 import { v4 as uuidv4 } from 'uuid';
 import { useAuth, useCollection, useDoc, useFirebase, useUser, useFirestore, useMemoFirebase } from '@/firebase';
-import { SidebarProvider, Sidebar, SidebarInset, SidebarHeader, SidebarContent, SidebarTrigger, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
+import { SidebarProvider, Sidebar, SidebarInset, SidebarHeader, SidebarContent, SidebarTrigger, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarMenuAction } from '@/components/ui/sidebar';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,7 +69,7 @@ export default function LoanEngineDashboard() {
   
   const loansQuery = useMemoFirebase(() => {
     if (!user || !firestore) return null;
-    return collection(firestore, 'loans');
+    return query(collection(firestore, 'loans'), where('userId', '==', user.uid));
   }, [user, firestore]);
   const { data: loans, isLoading: loansLoading } = useCollection(loansQuery);
 
