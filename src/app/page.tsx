@@ -191,13 +191,13 @@ export default function LoanEngineDashboard() {
   }, [selectedLoanId, firestore]);
   const { data: loanData, isLoading: isLoanDataLoading } = useDoc(selectedLoanDoc);
 
-  const drawdownsQuery = useMemoFirebase(() => selectedLoanId ? collection(firestore, 'loans', selectedLoanId, 'drawdowns') : null, [selectedLoanId]);
+  const drawdownsQuery = useMemoFirebase(() => selectedLoanId ? collection(firestore, 'loans', selectedLoanId, 'drawdowns') : null, [selectedLoanId, firestore]);
   const { data: drawdownsData } = useCollection<Drawdown>(drawdownsQuery);
   
-  const paymentsQuery = useMemoFirebase(() => selectedLoanId ? collection(firestore, 'loans', selectedLoanId, 'manualPayments') : null, [selectedLoanId]);
+  const paymentsQuery = useMemoFirebase(() => selectedLoanId ? collection(firestore, 'loans', selectedLoanId, 'manualPayments') : null, [selectedLoanId, firestore]);
   const { data: paymentsData } = useCollection<ManualPayment>(paymentsQuery);
 
-  const rateChangesQuery = useMemoFirebase(() => selectedLoanId ? collection(firestore, 'loans', selectedLoanId, 'interestRateChanges') : null, [selectedLoanId]);
+  const rateChangesQuery = useMemoFirebase(() => selectedLoanId ? collection(firestore, 'loans', selectedLoanId, 'interestRateChanges') : null, [selectedLoanId, firestore]);
   const { data: rateChangesData } = useCollection<InterestRateChange>(rateChangesQuery);
   
   const [schedule, setSchedule] = useState<AmortizationPeriod[]>([]);
