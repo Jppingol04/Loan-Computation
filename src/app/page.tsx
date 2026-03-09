@@ -489,7 +489,52 @@ export default function LoanEngineDashboard() {
   };
   
   const handleAiAnalysis = async () => {
-    // ... (rest of the function is the same as before)
+    if (schedule.length === 0) {
+      toast({ variant: "destructive", title: "Cannot Analyze", description: "A schedule must be generated first." });
+      return;
+    }
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+    logAudit('AI Analysis', 'Started AI-powered analysis.');
+    try {
+      const finalPeriod = schedule[schedule.length-1];
+      const analysisInput: AiAnalysisInput = {
+        loanSummary: {
+          loanName: loanInput.loanName,
+          principalAmount: loanInput.principalAmount,
+          annualInterestRate: loanInput.annualInterestRate,
+          termInMonths: loanInput.termInMonths,
+          startDate: loanInput.startDate,
+          currency: loanInput.currency,
+          monthlyPayment: 0, // Placeholder, as it's a drawdown facility
+          totalInterest: finalPeriod.cumulativeInterest,
+          totalPayable: finalPeriod.closingBalance + finalPeriod.cumulativeInterest,
+        },
+        amortizationSchedule: schedule.map(p => ({
+          periodNumber: p.periodNumber,
+          date: p.date,
+          openingBalance: p.openingBalance,
+          drawdownAmount: p.drawdownAmount,
+          interestAccrual: p.interestAccrual,
+          principalPaid: p.principalPaid,
+          interestPaid: p.interestPaid,
+          closingBalance: p.closingBalance,
+          cumulativeInterest: p.cumulativeInterest,
+          status: p.status,
+        })),
+        auditTrail: auditTrail.slice(0, 10), // Send recent audit trail
+      };
+
+      const result = await aiPoweredLoanInsights(analysisInput);
+      setAiAnalysis(result);
+      logAudit('AI Analysis Complete', 'Successfully received AI insights.');
+    } catch (e: any) {
+      console.error(e);
+      toast({ variant: "destructive", title: "AI Analysis Failed", description: e.message });
+      logAudit('AI Analysis Failed', `Error: ${e.message}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const availableYears = useMemo(() => {
@@ -704,12 +749,76 @@ export default function LoanEngineDashboard() {
             </div>
           </TabsContent>
 
-          <TabsContent value="drawdowns">
-             {/* Drawdowns UI - unchanged */}
+          <TabsContent value="drawdowns" className="space-y-4">
+             <Card className="bg-slate-900/50 border-white/5">
+                <CardHeader>
+                    <CardTitle>Incremental Drawdowns</CardTitle>
+                    <CardDescription>Record funds drawn down from the facility. The schedule will recalculate interest based on the new balance from the drawdown date.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    <div className="flex flex-col md:flex-row gap-4 items-end bg-slate-800/30 p-6 rounded-xl border border-white/5">
+                        <div className="space-y-2 flex-1"><Label>Drawdown Date</Label><Input type="date" className="bg-slate-900" value={newDrawdown.date} onChange={e => setNewDrawdown({...newDrawdown, date: e.target.value})} /></div>
+                        <div className="space-y-2 flex-1"><Label>Amount</Label><Input type="number" className="bg-slate-900" value={newDrawdown.amount} onChange={e => setNewDrawdown({...newDrawdown, amount: Number(e.target.value)})} /></div>
+                        <Button onClick={handleAddDrawdown} className="bg-primary"><Plus className="h-4 w-4 mr-2" />Add Drawdown</Button>
+                    </div>
+                     <div className="flex justify-end">
+                        <Button variant="destructive" size="sm" onClick={handleClearDrawdowns}><Trash2 className="h-4 w-4 mr-2" />Clear All Drawdowns</Button>
+                    </div>
+                    <Table>
+                        <TableHeader><TableRow className="border-white/10"><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+                        <TableBody>
+                            {loanInput.drawdowns?.map(d => (
+                            <TableRow key={d.id} className="border-white/5 hover:bg-white/5 group">
+                                <TableCell>{d.date}</TableCell>
+                                <TableCell className="font-code">{loanInput.currency} {d.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="text-right">
+                                <Button variant="ghost" size="icon" onClick={() => setLoanInput(p => ({...p, drawdowns: p.drawdowns?.filter(x => x.id !== d.id)}))}>
+                                    <Trash2 className="h-4 w-4 text-destructive opacity-50 group-hover:opacity-100" />
+                                </Button>
+                                </TableCell>
+                            </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
           </TabsContent>
 
-          <TabsContent value="payments">
-            {/* Payments UI - unchanged */}
+          <TabsContent value="payments" className="space-y-4">
+            <Card className="bg-slate-900/50 border-white/5">
+                <CardHeader>
+                <CardTitle>Manual Settlements</CardTitle>
+                <CardDescription>Record manual principal or interest payments. This allows for flexible repayment scenarios outside of a fixed schedule.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    <div className="flex flex-col md:flex-row gap-4 items-end bg-slate-800/30 p-6 rounded-xl border border-white/5">
+                        <div className="space-y-2 w-32"><Label>Period</Label><Input type="number" className="bg-slate-900" value={newPayment.periodNumber} onChange={e => setNewPayment({...newPayment, periodNumber: Number(e.target.value)})} /></div>
+                        <div className="space-y-2 flex-1"><Label>Principal Amount</Label><Input type="number" className="bg-slate-900" value={newPayment.principal} onChange={e => setNewPayment({...newPayment, principal: Number(e.target.value)})} /></div>
+                        <div className="space-y-2 flex-1"><Label>Interest Amount</Label><Input type="number" className="bg-slate-900" value={newPayment.interest} onChange={e => setNewPayment({...newPayment, interest: Number(e.target.value)})} /></div>
+                        <Button onClick={handleAddPayment} className="bg-primary"><Plus className="h-4 w-4 mr-2" />Add Payment</Button>
+                    </div>
+                    <div className="flex justify-end">
+                        <Button variant="destructive" size="sm" onClick={handleClearPayments}><Trash2 className="h-4 w-4 mr-2" />Clear All Payments</Button>
+                    </div>
+                    <Table>
+                        <TableHeader><TableRow className="border-white/10"><TableHead>Period</TableHead><TableHead>Principal Paid</TableHead><TableHead>Interest Paid</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+                        <TableBody>
+                            {loanInput.manualPayments?.map(p => (
+                            <TableRow key={p.id} className="border-white/5 hover:bg-white/5 group">
+                                <TableCell>Month {p.periodNumber}</TableCell>
+                                <TableCell className="font-code">{loanInput.currency} {p.principalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="font-code">{loanInput.currency} {p.interestAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="text-right">
+                                <Button variant="ghost" size="icon" onClick={() => setLoanInput(prev => ({...prev, manualPayments: prev.manualPayments?.filter(x => x.id !== p.id)}))}>
+                                    <Trash2 className="h-4 w-4 text-destructive opacity-50 group-hover:opacity-100" />
+                                </Button>
+                                </TableCell>
+                            </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="rateChanges" className="space-y-4">
@@ -747,19 +856,163 @@ export default function LoanEngineDashboard() {
           </TabsContent>
 
           <TabsContent value="schedule">
-            {/* Schedule UI - unchanged */}
+            <Card className="bg-slate-900/50 border-white/5">
+                <CardHeader className="flex-row items-center justify-between">
+                    <div>
+                        <CardTitle>Amortization Ledger</CardTitle>
+                        <CardDescription>The detailed end-of-month (EOM) amortization schedule based on the effective interest rate (EIR) method.</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <Select value={yearFilter} onValueChange={setYearFilter}>
+                            <SelectTrigger className="w-48 bg-slate-800 border-white/10"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Years</SelectItem>
+                                {availableYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        <Button variant="outline" className="border-white/10" onClick={() => downloadCSV(`${loanInput.loanName}_schedule.csv`, generateAmortizationCSV(schedule))}>
+                            <FileText className="h-4 w-4 mr-2" /> Export CSV
+                        </Button>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    <ScrollArea className="h-[600px]">
+                        <Table>
+                        <TableHeader className="sticky top-0 bg-slate-900 z-10">
+                            <TableRow className="border-b border-white/10">
+                            <TableHead>Period</TableHead>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Opening Bal</TableHead>
+                            <TableHead>Drawdown</TableHead>
+                            <TableHead>Interest Accrual</TableHead>
+                            <TableHead>Principal Paid</TableHead>
+                            <TableHead>Interest Paid</TableHead>
+                            <TableHead>Closing Bal</TableHead>
+                            <TableHead>Cum. Interest</TableHead>
+                            <TableHead>Status</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {filteredSchedule.map(p => (
+                            <TableRow key={p.periodNumber} className="border-b border-white/5 hover:bg-white/5">
+                                <TableCell>{p.periodNumber}</TableCell>
+                                <TableCell>{p.date}</TableCell>
+                                <TableCell className="font-code text-right">{p.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="font-code text-right text-emerald-400">{p.drawdownAmount > 0 ? p.drawdownAmount.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</TableCell>
+                                <TableCell className="font-code text-right text-amber-400">{p.interestAccrual.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="font-code text-right text-red-400">{p.principalPaid > 0 ? p.principalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</TableCell>
+                                <TableCell className="font-code text-right text-red-400">{p.interestPaid > 0 ? p.interestPaid.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</TableCell>
+                                <TableCell className="font-code text-right">{p.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="font-code text-right">{p.cumulativeInterest.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell>
+                                    <Badge variant={p.status === 'paid' ? 'default' : 'outline'} className={p.status === 'paid' ? 'bg-emerald-600' : 'border-white/20'}>{p.status}</Badge>
+                                </TableCell>
+                            </TableRow>
+                            ))}
+                        </TableBody>
+                        </Table>
+                    </ScrollArea>
+                </CardContent>
+            </Card>
           </TabsContent>
           <TabsContent value="audit">
-            {/* Audit UI - unchanged */}
+            <Card className="bg-slate-900/50 border-white/5">
+                <CardHeader>
+                    <CardTitle>Audit Trail</CardTitle>
+                    <CardDescription>An immutable log of all actions performed during this session.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <ScrollArea className="h-[600px]">
+                    <Table>
+                        <TableHeader className="sticky top-0 bg-slate-900 z-10"><TableRow className="border-white/10"><TableHead>Timestamp</TableHead><TableHead>Action</TableHead><TableHead>Details</TableHead><TableHead>User</TableHead></TableRow></TableHeader>
+                        <TableBody>
+                        {auditTrail.map((entry, index) => (
+                            <TableRow key={index} className="border-white/5">
+                            <TableCell className="text-xs text-muted-foreground">{entry.timestamp}</TableCell>
+                            <TableCell className="font-medium">{entry.actionType}</TableCell>
+                            <TableCell>{entry.details}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{entry.user}</TableCell>
+                            </TableRow>
+                        ))}
+                        </TableBody>
+                    </Table>
+                    </ScrollArea>
+                </CardContent>
+            </Card>
           </TabsContent>
           <TabsContent value="ai">
-            {/* AI Insights UI - unchanged */}
+            <Card className="bg-slate-900/50 border-white/5">
+                <CardHeader>
+                <div className="flex justify-between items-start">
+                    <div>
+                    <CardTitle>AI-Powered Analysis</CardTitle>
+                    <CardDescription>Generates a financial summary and highlights key metrics using a Large Language Model.</CardDescription>
+                    </div>
+                    <Button onClick={handleAiAnalysis} disabled={isAnalyzing || schedule.length === 0}>
+                    {isAnalyzing ? "Analyzing..." : "Run AI Analysis"} <Sparkles className="h-4 w-4 ml-2" />
+                    </Button>
+                </div>
+                </CardHeader>
+                <CardContent>
+                {isAnalyzing ? (
+                    <div className="space-y-4">
+                        <Skeleton className="h-24 w-full" />
+                        <div className="grid grid-cols-2 gap-4">
+                            <Skeleton className="h-24 w-full" />
+                            <Skeleton className="h-24 w-full" />
+                        </div>
+                    </div>
+                ) : aiAnalysis ? (
+                    <div className="space-y-6">
+                        <Alert>
+                            <Lightbulb className="h-4 w-4" />
+                            <AlertTitle>Plain English Summary</AlertTitle>
+                            <AlertDescription>{aiAnalysis.plainEnglishSummary}</AlertDescription>
+                        </Alert>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <Alert variant={aiAnalysis.excessiveInterestFlag ? "destructive" : "default"}>
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertTitle>Excessive Interest</AlertTitle>
+                            <AlertDescription>{aiAnalysis.excessiveInterestFlag ? "Yes" : "No"}. Total interest is more than 30% of principal.</AlertDescription>
+                            </Alert>
+                            <Alert>
+                            <Lightbulb className="h-4 w-4" />
+                            <AlertTitle>Early Repayment</AlertTitle>
+                            <AlertDescription>{aiAnalysis.earlyRepaymentSuggestion}</AlertDescription>
+                            </Alert>
+                        </div>
+                         <Alert>
+                            <Lightbulb className="h-4 w-4" />
+                            <AlertTitle>Rate Change Impact</AlertTitle>
+                            <AlertDescription>{aiAnalysis.rateChangeImpactExplanation || "No rate changes detected or explanation available."}</AlertDescription>
+                        </Alert>
+                    </div>
+                ) : (
+                    <div className="text-center py-12 text-muted-foreground">
+                        <Sparkles className="mx-auto h-12 w-12" />
+                        <p className="mt-4">Run AI analysis to get insights on your loan.</p>
+                    </div>
+                )}
+                </CardContent>
+            </Card>
           </TabsContent>
 
         </Tabs>
       </main>
 
-      {/* Import Dialog - unchanged */}
+      <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
+        <DialogContent className="sm:max-w-[425px] bg-card border-border">
+            <DialogHeader>
+            <DialogTitle>Bulk Import</DialogTitle>
+            <DialogDescription>
+                Upload a CSV file with drawdown or payment data. The file must contain columns: `type` ('drawdown' or 'payment'), `date` (YYYY-MM-DD for drawdowns), `amount` (for drawdowns), `period` (for payments), `principal`, `interest`.
+            </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+            <Input type="file" accept=".csv" ref={fileInputRef} onChange={handleFileUpload} />
+            </div>
+        </DialogContent>
+      </Dialog>
 
     </SidebarInset>
     </div>
