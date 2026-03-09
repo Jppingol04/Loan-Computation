@@ -248,12 +248,15 @@ export default function LoanEngineDashboard() {
     return schedule.filter(p => p.date.startsWith(yearFilter));
   }, [schedule, yearFilter]);
 
-  // Derived Stat Totals from the Schedule for IFRS accuracy
+  const totalPrincipalOnly = useMemo(() => {
+    const base = loanInput.principalAmount;
+    const draws = (loanInput.drawdowns || []).reduce((sum, d) => sum + d.amount, 0);
+    const paid = (loanInput.manualPayments || []).reduce((sum, p) => sum + p.principalAmount, 0);
+    return base + draws - paid;
+  }, [loanInput]);
+
   const totalCurrentExposure = useMemo(() => {
-    // Latest closing balance in the schedule is the remaining exposure
     if (schedule.length === 0) return loanInput.principalAmount;
-    // For a projection tool, showing the current outstanding (not final zero) is better
-    // We'll show the max balance reached if all projected, or current month balance
     return schedule.reduce((max, p) => Math.max(max, p.closingBalance), 0);
   }, [schedule, loanInput.principalAmount]);
 
@@ -282,7 +285,13 @@ export default function LoanEngineDashboard() {
       </header>
 
       <main className="flex-1 container mx-auto p-4 md:p-8 space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <Card className="bg-slate-900 border-white/5 shadow-2xl">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 mb-2"><CreditCard className="h-4 w-4 text-emerald-400" /><p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Principal</p></div>
+              <p className="text-2xl font-bold font-code text-emerald-400">{loanInput.currency} {totalPrincipalOnly.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+            </CardContent>
+          </Card>
           <Card className="bg-slate-900 border-white/5 shadow-2xl">
             <CardContent className="pt-6">
               <div className="flex items-center gap-2 mb-2"><Wallet className="h-4 w-4 text-primary" /><p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Gross Exposure</p></div>
@@ -303,7 +312,7 @@ export default function LoanEngineDashboard() {
           </Card>
           <Card className="bg-slate-900 border-white/5 shadow-2xl">
             <CardContent className="pt-6">
-              <div className="flex items-center gap-2 mb-2"><History className="h-4 w-4 text-purple-400" /><p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Computation Basis</p></div>
+              <div className="flex items-center gap-2 mb-2"><History className="h-4 w-4 text-purple-400" /><p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Basis</p></div>
               <p className="text-2xl font-bold font-code text-purple-400">{loanInput.dayCountConvention}</p>
             </CardContent>
           </Card>
