@@ -35,7 +35,7 @@ const AmortizationPeriodSchema = z.object({
   interestPaid: z.number(),
   closingBalance: z.number(),
   cumulativeInterest: z.number(),
-  status: z.enum(['projected', 'paid', 'unpaid']),
+  status: z.enum(['projected', 'paid', 'unpaid', 'recalculated']),
 });
 
 const AuditEntrySchema = z.object({

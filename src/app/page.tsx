@@ -12,7 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
-import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet, FileText, Eraser, PlayCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet, FileText, Eraser, PlayCircle, Lightbulb, AlertTriangle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import Papa from 'papaparse';
 import { 
@@ -29,6 +31,7 @@ import {
   generateAmortizationCSV,
   exportToExcel
 } from '@/lib/export-utils';
+import { aiPoweredLoanInsights, AiAnalysisInput, AiAnalysisOutput } from '@/ai/flows/ai-powered-loan-insights';
 
 export default function LoanEngineDashboard() {
   const { toast } = useToast();
@@ -57,6 +60,9 @@ export default function LoanEngineDashboard() {
   const [newDrawdown, setNewDrawdown] = useState({ date: '', amount: 0 });
   const [newPayment, setNewPayment] = useState({ periodNumber: 1, principal: 0, interest: 0 });
   const [isImportOpen, setIsImportOpen] = useState(false);
+
+  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisOutput | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Robust date normalization for imports
   const normalizeDateString = (dateStr: string): string => {
@@ -259,6 +265,61 @@ export default function LoanEngineDashboard() {
     }));
   };
 
+  const handleAiAnalysis = async () => {
+    if (schedule.length === 0) {
+      toast({ variant: "destructive", title: "Cannot Analyze", description: "Please generate a schedule first." });
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+  
+    try {
+      const totalPrincipal = loanInput.principalAmount + (loanInput.drawdowns || []).reduce((sum, d) => sum + d.amount, 0);
+      const totalInterest = schedule.length > 0 ? schedule[schedule.length - 1].cumulativeInterest : 0;
+      const totalPayments = schedule.reduce((acc, p) => acc + p.totalPayment, 0);
+      
+      const analysisInput: AiAnalysisInput = {
+        loanSummary: {
+          loanName: loanInput.loanName,
+          principalAmount: loanInput.principalAmount,
+          annualInterestRate: loanInput.annualInterestRate,
+          termInMonths: loanInput.termInMonths,
+          startDate: loanInput.startDate,
+          currency: loanInput.currency,
+          monthlyPayment: loanInput.termInMonths > 0 ? totalPayments / loanInput.termInMonths : 0,
+          totalInterest: totalInterest,
+          totalPayable: totalPrincipal + totalInterest,
+        },
+        amortizationSchedule: schedule.map(p => ({
+          periodNumber: p.periodNumber,
+          date: p.date,
+          openingBalance: p.openingBalance,
+          drawdownAmount: p.drawdownAmount,
+          interestAccrual: p.interestAccrual,
+          principalPaid: p.principalPaid,
+          interestPaid: p.interestPaid,
+          closingBalance: p.closingBalance,
+          cumulativeInterest: p.cumulativeInterest,
+          status: p.status,
+        })),
+        auditTrail: auditTrail,
+      };
+  
+      const result = await aiPoweredLoanInsights(analysisInput);
+      setAiAnalysis(result);
+      logAudit('AI Analysis', `Loan insights generated successfully.`);
+      toast({ title: "Analysis Complete", description: "AI-powered insights are ready for review." });
+  
+    } catch (error: any) {
+      console.error("AI Analysis Error:", error);
+      toast({ variant: "destructive", title: "AI Analysis Failed", description: error.message || "Could not generate insights." });
+      logAudit('AI Analysis Failed', `Error: ${error.message}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const availableYears = useMemo(() => {
     const years = new Set<string>();
     schedule.forEach(p => years.add(p.date.split('-')[0]));
@@ -349,6 +410,9 @@ export default function LoanEngineDashboard() {
             <TabsTrigger value="payments" className="data-[state=active]:bg-primary rounded-lg">Payments</TabsTrigger>
             <TabsTrigger value="schedule" className="data-[state=active]:bg-primary rounded-lg">Ledger (EOM)</TabsTrigger>
             <TabsTrigger value="audit" className="data-[state=active]:bg-primary rounded-lg">Audit</TabsTrigger>
+            <TabsTrigger value="ai" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2">
+              <Sparkles className="h-4 w-4" /> AI Insights
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="setup" className="space-y-6">
@@ -588,6 +652,74 @@ export default function LoanEngineDashboard() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="ai" className="space-y-6">
+            <Card className="bg-slate-900/50 border-white/5">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-primary"><Sparkles className="h-5 w-5" /> AI-Powered Insights</CardTitle>
+                  <CardDescription>Let AI analyze your loan data for a plain-English summary, risk factors, and suggestions.</CardDescription>
+                </div>
+                <Button onClick={handleAiAnalysis} disabled={isAnalyzing || isComputing}>
+                  <Sparkles className={`mr-2 h-4 w-4 ${isAnalyzing ? 'animate-spin' : ''}`} />
+                  {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {isAnalyzing ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-24 w-full" />
+                    <div className="grid md:grid-cols-2 gap-4">
+                        <Skeleton className="h-32 w-full" />
+                        <Skeleton className="h-32 w-full" />
+                    </div>
+                  </div>
+                ) : !aiAnalysis ? (
+                  <div className="text-center py-16 text-muted-foreground italic text-sm">Click "Run AI Analysis" to generate insights.</div>
+                ) : (
+                  <div className="space-y-6">
+                    {aiAnalysis.excessiveInterestFlag && (
+                      <Alert variant="destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>High Interest Warning</AlertTitle>
+                        <AlertDescription>
+                          The total accrued interest is projected to be more than 30% of the initial principal.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <Card className="bg-slate-800/40 border-white/10">
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2 text-base"><Lightbulb className="text-amber-400" />Plain-English Summary</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-sm text-slate-300 leading-relaxed">
+                          <p>{aiAnalysis.plainEnglishSummary}</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="bg-slate-800/40 border-white/10">
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2 text-base"><TrendingUp className="text-emerald-400" />Early Repayment Suggestions</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-sm text-slate-300 leading-relaxed">
+                          <p>{aiAnalysis.earlyRepaymentSuggestion}</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+                     <Card className="bg-slate-800/40 border-white/10">
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2 text-base"><History className="text-blue-400" />Auditor Note on Rate Changes</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-sm text-slate-300 leading-relaxed">
+                           <p>{aiAnalysis.rateChangeImpactExplanation}</p>
+                        </CardContent>
+                      </Card>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
         </Tabs>
       </main>
 
