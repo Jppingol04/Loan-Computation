@@ -1,4 +1,3 @@
-
 import { AmortizationPeriod, LoanInput } from './loan-calculations';
 import * as XLSX from 'xlsx';
 
@@ -16,105 +15,72 @@ export function downloadCSV(filename: string, content: string) {
   }
 }
 
-export function exportToExcel(schedule: AmortizationPeriod[], loanInput: LoanInput) {
-  const annualRate = loanInput.annualInterestRate / 100;
-  const convention = loanInput.dayCountConvention;
-  const yearBasis = convention.endsWith('360') ? 360 : 365;
-
-  // Create a detached "parameters" sheet to hold values for formulas
-  const paramsSheetData = [
-    ['Annual Rate', annualRate],
-    ['Year Basis', yearBasis],
-    ['Convention', convention],
-    ['Start Date', loanInput.startDate]
+export function generateAmortizationCSV(schedule: AmortizationPeriod[]): string {
+  const headers = [
+    'Period', 'Date', 'Opening Balance', 'Drawdown', 'Interest Accrual',
+    'Principal Paid', 'Interest Paid', 'Closing Balance', 'Cumulative Interest', 'Status'
   ];
-  const paramsSheet = XLSX.utils.aoa_to_sheet(paramsSheetData);
-
-
-  const header = [
-    'Period',             // A
-    'Date',               // B
-    'Opening Balance',    // C
-    'Drawdown',           // D
-    'Interest Accrual',   // E
-    'Principal Paid',     // F
-    'Interest Paid',      // G
-    'Closing Balance',    // H
-    'Cumulative Interest',// I
-    'Status'              // J
-  ];
-
-  const dataRows = schedule.map((p, index) => {
-    const excelRowNum = index + 2;
-
-    const openingBalanceCell = index === 0
-      ? { v: p.openingBalance, t: 'n', z: '#,##0.00' }
-      : { f: `H${excelRowNum - 1}`, t: 'n', z: '#,##0.00' };
-
-    const cumulativeInterestCell = index === 0
-      ? { v: p.cumulativeInterest, t: 'n', z: '#,##0.00' }
-      : { f: `I${excelRowNum - 1}+E${excelRowNum}`, t: 'n', z: '#,##0.00' };
-
-    let interestFormula: string;
-    // For simplicity in Excel, we base the calculation on the period's opening balance
-    // and total drawdown amount. This won't perfectly match the app's intra-month
-    // calculation for drawdowns but provides a transparent formula.
-    // The formula will be: (Opening Balance * Days in Period * Daily Rate) + (Drawdown * ~15 days * Daily Rate)
-    const dailyRate = `Parameters!$B$1/Parameters!$B$2`;
-    const prevDateCell = index === 0 ? 'Parameters!$B$4' : `B${excelRowNum - 1}`;
-    const daysInPeriod = `B${excelRowNum}-${prevDateCell}`;
-
-    // A simplified weighted average for drawdown interest within the month.
-    interestFormula = `C${excelRowNum}*(${daysInPeriod})*${dailyRate} + D${excelRowNum}*15*${dailyRate}`;
-    
-    // Note: Due to the complexity of replicating the exact intra-month accrual logic
-    // in an Excel formula (which requires knowing the specific date of each drawdown),
-    // this formula provides a close approximation for transparency. The original, precise
-    // values from the engine are also available if the formula is removed.
-    
-    return [
-      { v: p.periodNumber, t: 'n' },
-      { v: p.date, t: 's' },
-      openingBalanceCell,
-      { v: p.drawdownAmount, t: 'n', z: '#,##0.00' },
-      { f: interestFormula, t: 'n', z: '#,##0.00' },
-      { v: p.principalPaid, t: 'n', z: '#,##0.00' },
-      { v: p.interestPaid, t: 'n', z: '#,##0.00' },
-      { f: `MAX(0, C${excelRowNum}+D${excelRowNum}+E${excelRowNum}-F${excelRowNum}-G${excelRowNum})`, t: 'n', z: '#,##0.00' },
-      cumulativeInterestCell,
-      { v: p.status, t: 's' }
-    ];
-  });
-
-  const worksheetData = [header, ...dataRows];
-  const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
-  
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Amortization Schedule");
-  XLSX.utils.book_append_sheet(workbook, paramsSheet, "Parameters");
-  paramsSheet['!cols'] = [{hidden: true}]; // Hide the parameters sheet
-
-  const wscols = [
-    {wch: 8},   // Period
-    {wch: 12},  // Date
-    {wch: 18},  // Opening Balance
-    {wch: 18},  // Drawdown
-    {wch: 18},  // Interest Accrual
-    {wch: 18},  // Principal Paid
-    {wch: 18},  // Interest Paid
-    {wch: 18},  // Closing Balance
-    {wch: 18},  // Cumulative Interest
-    {wch: 12}   // Status
-  ];
-  worksheet['!cols'] = wscols;
-
-  XLSX.writeFile(workbook, `${loanInput.loanName || 'Loan_Schedule'}.xlsx`);
+  const rows = schedule.map(p => [
+    p.periodNumber, p.date, p.openingBalance, p.drawdownAmount,
+    p.interestAccrual, p.principalPaid, p.interestPaid,
+    p.closingBalance, p.cumulativeInterest, p.status
+  ]);
+  return [headers, ...rows].map(r => r.join(',')).join('\n');
 }
 
+export function exportToExcel(
+  schedule: AmortizationPeriod[], 
+  loanInput: LoanInput, 
+  auditTrail: any[]
+) {
+  const wb = XLSX.utils.book_new();
 
-export function generateAmortizationCSV(schedule: AmortizationPeriod[]): string {
-  const headers = ['Period', 'Date', 'Opening Balance', 'Drawdown', 'Interest Accrual', 'Principal Paid', 'Interest Paid', 'Closing Balance', 'Cumulative Interest', 'Status'];
-  const rows = schedule.map(p => [
+  const convention = loanInput.dayCountConvention ?? 'ACT/365';
+  const totalInterest = schedule.length > 0 ? schedule[schedule.length - 1].cumulativeInterest : 0;
+  const totalPrincipalPaid = schedule.reduce((s, p) => s + p.principalPaid, 0);
+  const totalInterestPaid  = schedule.reduce((s, p) => s + p.interestPaid, 0);
+  const totalDrawdowns = (loanInput.drawdowns ?? []).reduce((sum, d) => sum + d.amount, 0);
+
+  // --- SHEET 1: PARAMETERS & SUMMARY ---
+  const summaryRows: (string | number)[][] = [
+    ['LOAN ACCRUAL SCHEDULE — IFRS 9 EIR METHOD'],
+    [],
+    ['Export Details'],
+    ['Export Generated By', 'LoanGuard EIR Engine'],
+    ['Export Timestamp', new Date().toISOString()],
+    [],
+    ['Facility Core Parameters'],
+    ['Facility Name',        loanInput.loanName       ?? '—'],
+    ['Currency',             loanInput.currency        ?? 'USD'],
+    ['Start Date',           loanInput.startDate],
+    ['Term (Months)',        loanInput.termInMonths],
+    ['Base Principal',       loanInput.principalAmount],
+    ['Annual Interest Rate', `${loanInput.annualInterestRate}%`],
+    ['Day Count Convention', convention],
+    ['Maturity Type',      loanInput.isBullet ? 'Bullet' : 'Amortizing'],
+    [],
+    ['Facility Lifetime Totals'],
+    ['Total Base Principal', loanInput.principalAmount],
+    ['Total Incremental Drawdowns', totalDrawdowns],
+    ['Total Gross Facility', loanInput.principalAmount + totalDrawdowns],
+    ['Total Interest Accrued', totalInterest],
+    ['Total Principal Repaid', totalPrincipalPaid],
+    ['Total Interest Settled', totalInterestPaid],
+    ['Final Closing Balance',  schedule.length > 0 ? schedule[schedule.length - 1].closingBalance : 'N/A'],
+  ];
+
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+  summarySheet['!cols'] = [{ wch: 30 }, { wch: 35 }];
+  XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary & Parameters');
+
+  // --- SHEET 2: AMORTIZATION SCHEDULE ---
+  const scheduleHeaders = [
+    'Period', 'Period End Date', 'Opening Balance', 'Drawdown',
+    'Interest Accrual', 'Principal Paid', 'Interest Paid', 'Total Payment',
+    'Closing Balance', 'Cumulative Interest', 'Status',
+  ];
+
+  const scheduleData = schedule.map(p => [
     p.periodNumber,
     p.date,
     p.openingBalance,
@@ -122,9 +88,49 @@ export function generateAmortizationCSV(schedule: AmortizationPeriod[]): string 
     p.interestAccrual,
     p.principalPaid,
     p.interestPaid,
+    p.totalPayment,
     p.closingBalance,
     p.cumulativeInterest,
     p.status
   ]);
-  return [headers, ...rows].map(r => r.join(',')).join('\n');
+
+  const scheduleSheet = XLSX.utils.aoa_to_sheet([scheduleHeaders, ...scheduleData]);
+  const numFmt = '#,##0.00';
+  scheduleSheet['!cols'] = [
+    { wch: 8  }, { wch: 15 }, { wch: 18 }, { wch: 18 },
+    { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 16 },
+    { wch: 18 }, { wch: 20 }, { wch: 15 },
+  ];
+  
+  const range = XLSX.utils.decode_range(scheduleSheet['!ref'] || 'A1');
+  for(let R = range.s.r + 1; R <= range.e.r; ++R) {
+    for(let C = 2; C <= 9; ++C) {
+      const cell_address = {c:C, r:R};
+      const cell_ref = XLSX.utils.encode_cell(cell_address);
+      if(scheduleSheet[cell_ref]) {
+        scheduleSheet[cell_ref].t = 'n';
+        scheduleSheet[cell_ref].z = numFmt;
+      }
+    }
+  }
+
+  scheduleSheet['!freeze'] = { xSplit: 0, ySplit: 1, state: 'frozen' };
+  XLSX.utils.book_append_sheet(wb, scheduleSheet, 'Amortization Ledger');
+  
+  // --- SHEET 3: AUDIT TRAIL ---
+  const auditHeaders = ['Timestamp', 'Action Type', 'Details', 'User'];
+  const auditData = auditTrail.map(e => [
+    e.timestamp,
+    e.actionType,
+    e.details,
+    e.user
+  ]).reverse();
+
+  const auditSheet = XLSX.utils.aoa_to_sheet([auditHeaders, ...auditData]);
+  auditSheet['!cols'] = [{ wch: 25 }, { wch: 25 }, { wch: 70 }, { wch: 20 }];
+  auditSheet['!freeze'] = { xSplit: 0, ySplit: 1, state: 'frozen' };
+  XLSX.utils.book_append_sheet(wb, auditSheet, 'Audit Trail');
+
+  // --- WRITE FILE ---
+  XLSX.writeFile(wb, `${loanInput.loanName || 'Loan_Schedule'}_Export.xlsx`);
 }

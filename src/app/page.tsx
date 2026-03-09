@@ -48,7 +48,8 @@ export default function LoanEngineDashboard() {
     manualPayments: [],
     periodStatuses: {}
   });
-
+  
+  const [editingField, setEditingField] = useState({ field: '', value: '' });
   const [schedule, setSchedule] = useState<AmortizationPeriod[]>([]);
   const [auditTrail, setAuditTrail] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('setup');
@@ -125,6 +126,16 @@ export default function LoanEngineDashboard() {
       user: 'Internal Auditor'
     };
     setAuditTrail(prev => [entry, ...prev]);
+  };
+
+  const handleParamChange = (field: keyof LoanInput, value: any, oldValue: any) => {
+     if (value !== oldValue) {
+      logAudit(
+        'Parameter Change',
+        `"${field}" changed from "${oldValue}" to "${value}".`
+      );
+    }
+    setLoanInput(prev => ({ ...prev, [field]: value }));
   };
 
   const handleAddDrawdown = () => {
@@ -228,6 +239,11 @@ export default function LoanEngineDashboard() {
     });
     e.target.value = '';
   };
+  
+  const handleExportExcel = () => {
+    logAudit('Excel Export', `Workbook exported for "${loanInput.loanName}".`);
+    exportToExcel(schedule, loanInput, auditTrail);
+  };
 
   const handleDownloadTemplate = () => {
     const headers = "type,date,amount,period,principal,interest\n";
@@ -235,6 +251,14 @@ export default function LoanEngineDashboard() {
     const example2 = "payment,, ,1,50000,12000\n";
     downloadCSV("loan_import_template.csv", headers + example1 + example2);
     toast({ title: "Template Downloaded", description: "Follow the column format to import historical data." });
+  };
+
+  const handleMarkAsPaid = (periodNumber: number) => {
+    logAudit('Status Update', `Period ${periodNumber} status changed to "paid".`);
+    setLoanInput(prev => ({
+      ...prev,
+      periodStatuses: { ...(prev.periodStatuses || {}), [periodNumber]: 'paid' }
+    }));
   };
 
   const availableYears = useMemo(() => {
@@ -255,14 +279,16 @@ export default function LoanEngineDashboard() {
     return base + draws - paid;
   }, [loanInput]);
 
-  const totalCurrentExposure = useMemo(() => {
-    if (schedule.length === 0) return loanInput.principalAmount;
-    return schedule.reduce((max, p) => Math.max(max, p.closingBalance), 0);
-  }, [schedule, loanInput.principalAmount]);
-
-  const totalInterestAccrued = useMemo(() => {
-    return schedule.reduce((acc, curr) => acc + curr.interestAccrual, 0);
+  const { totalCurrentExposure, totalInterestAccrued } = useMemo(() => {
+    if (schedule.length === 0) {
+      return { totalCurrentExposure: null, totalInterestAccrued: null };
+    }
+    return {
+      totalCurrentExposure: schedule.reduce((max, p) => Math.max(max, p.closingBalance), 0),
+      totalInterestAccrued: schedule.reduce((acc, curr) => acc + curr.interestAccrual, 0)
+    };
   }, [schedule]);
+
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-50 font-body">
@@ -279,7 +305,7 @@ export default function LoanEngineDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <Button variant="outline" size="sm" className="border-white/10" onClick={() => setIsImportOpen(true)}><Upload className="h-4 w-4 mr-2" /> Bulk Import</Button>
-            <Button size="sm" onClick={() => exportToExcel(schedule, loanInput)} className="shadow-lg shadow-primary/25 bg-primary hover:bg-primary/90"><FileSpreadsheet className="h-4 w-4 mr-2" /> Export Excel</Button>
+            <Button size="sm" onClick={handleExportExcel} className="shadow-lg shadow-primary/25 bg-primary hover:bg-primary/90"><FileSpreadsheet className="h-4 w-4 mr-2" /> Export Excel</Button>
           </div>
         </div>
       </header>
@@ -295,13 +321,13 @@ export default function LoanEngineDashboard() {
           <Card className="bg-slate-900 border-white/5 shadow-2xl">
             <CardContent className="pt-6">
               <div className="flex items-center gap-2 mb-2"><Wallet className="h-4 w-4 text-primary" /><p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Gross Exposure</p></div>
-              <p className="text-2xl font-bold font-code">{loanInput.currency} {totalCurrentExposure.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              <p className="text-2xl font-bold font-code">{totalCurrentExposure === null ? '—' : `${loanInput.currency} ${totalCurrentExposure.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}</p>
             </CardContent>
           </Card>
           <Card className="bg-slate-900 border-white/5 shadow-2xl">
             <CardContent className="pt-6">
               <div className="flex items-center gap-2 mb-2"><TrendingUp className="h-4 w-4 text-amber-500" /><p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Accrued Interest</p></div>
-              <p className="text-2xl font-bold font-code text-amber-500">{loanInput.currency} {totalInterestAccrued.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              <p className="text-2xl font-bold font-code text-amber-500">{totalInterestAccrued === null ? '—' : `${loanInput.currency} ${totalInterestAccrued.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}</p>
             </CardContent>
           </Card>
           <Card className="bg-slate-900 border-white/5 shadow-2xl">
@@ -333,18 +359,57 @@ export default function LoanEngineDashboard() {
                 <CardHeader><CardTitle className="text-primary flex items-center gap-2"><Settings2 className="h-5 w-5" /> Facility Parameters</CardTitle></CardHeader>
                 <CardContent className="grid grid-cols-2 gap-8">
                   <div className="space-y-4">
-                    <div className="space-y-2"><Label>Facility Reference</Label><Input className="bg-slate-800 border-white/10" value={loanInput.loanName} onChange={e => setLoanInput({...loanInput, loanName: e.target.value})} /></div>
+                    <div className="space-y-2"><Label>Facility Reference</Label>
+                      <Input className="bg-slate-800 border-white/10" value={loanInput.loanName} 
+                        onFocus={(e) => setEditingField({ field: 'loanName', value: e.target.value })}
+                        onChange={e => setLoanInput({...loanInput, loanName: e.target.value})}
+                        onBlur={(e) => handleParamChange('loanName', e.target.value, editingField.value)}
+                      />
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2"><Label>Base Principal</Label><Input type="number" className="bg-slate-800 border-white/10" value={loanInput.principalAmount} onChange={e => setLoanInput({...loanInput, principalAmount: Number(e.target.value)})} /></div>
-                      <div className="space-y-2"><Label>Currency</Label><Select value={loanInput.currency} onValueChange={v => setLoanInput({...loanInput, currency: v})}><SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="USD">USD</SelectItem><SelectItem value="AED">AED</SelectItem><SelectItem value="EUR">EUR</SelectItem></SelectContent></Select></div>
+                      <div className="space-y-2"><Label>Base Principal</Label>
+                        <Input type="number" className="bg-slate-800 border-white/10" value={loanInput.principalAmount} 
+                          onFocus={(e) => setEditingField({ field: 'principalAmount', value: e.target.value })}
+                          onChange={e => setLoanInput({...loanInput, principalAmount: Number(e.target.value)})}
+                          onBlur={(e) => handleParamChange('principalAmount', Number(e.target.value), Number(editingField.value))}
+                        />
+                      </div>
+                      <div className="space-y-2"><Label>Currency</Label>
+                        <Select value={loanInput.currency} onValueChange={v => handleParamChange('currency', v, loanInput.currency)}>
+                          <SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value="USD">USD</SelectItem><SelectItem value="AED">AED</SelectItem><SelectItem value="EUR">EUR</SelectItem></SelectContent>
+                        </Select>
+                      </div>
                     </div>
                   </div>
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2"><Label>Rate (%)</Label><Input type="number" step="0.01" className="bg-slate-800 border-white/10" value={loanInput.annualInterestRate} onChange={e => setLoanInput({...loanInput, annualInterestRate: Number(e.target.value)})} /></div>
-                      <div className="space-y-2"><Label>Term (Mo)</Label><Input type="number" className="bg-slate-800 border-white/10" value={loanInput.termInMonths} onChange={e => setLoanInput({...loanInput, termInMonths: Number(e.target.value)})} /></div>
+                      <div className="space-y-2"><Label>Rate (%)</Label>
+                        <Input type="number" step="0.01" className="bg-slate-800 border-white/10" value={loanInput.annualInterestRate}
+                          onFocus={(e) => setEditingField({ field: 'annualInterestRate', value: e.target.value })}
+                          onChange={e => setLoanInput({...loanInput, annualInterestRate: Number(e.target.value)})} 
+                          onBlur={(e) => handleParamChange('annualInterestRate', Number(e.target.value), Number(editingField.value))}
+                        />
+                      </div>
+                      <div className="space-y-2"><Label>Term (Mo)</Label>
+                        <Input type="number" className="bg-slate-800 border-white/10" value={loanInput.termInMonths}
+                          onFocus={(e) => setEditingField({ field: 'termInMonths', value: e.target.value })}
+                          onChange={e => setLoanInput({...loanInput, termInMonths: Number(e.target.value)})} 
+                          onBlur={(e) => handleParamChange('termInMonths', Number(e.target.value), Number(editingField.value))}
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-2"><Label>Convention</Label><Select value={loanInput.dayCountConvention} onValueChange={v => setLoanInput({...loanInput, dayCountConvention: v as DayCountConvention})}><SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30/360">30/360</SelectItem><SelectItem value="30/365">30/365</SelectItem><SelectItem value="ACT/360">ACT/360</SelectItem><SelectItem value="ACT/365">ACT/365</SelectItem></SelectContent></Select></div>
+                    <div className="space-y-2"><Label>Convention</Label>
+                      <Select value={loanInput.dayCountConvention} onValueChange={v => handleParamChange('dayCountConvention', v, loanInput.dayCountConvention)}>
+                        <SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="30/360">30/360</SelectItem>
+                          <SelectItem value="30/365">30/365</SelectItem>
+                          <SelectItem value="ACT/360">ACT/360</SelectItem>
+                          <SelectItem value="ACT/365">ACT/365</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -355,7 +420,7 @@ export default function LoanEngineDashboard() {
                   <p className="text-xs text-muted-foreground mt-1">Settles full balance at maturity</p>
                 </div>
                 <div className="flex items-center space-x-2">
-                   <Switch checked={loanInput.isBullet} onCheckedChange={(v) => setLoanInput({...loanInput, isBullet: v})} />
+                   <Switch checked={loanInput.isBullet} onCheckedChange={(v) => handleParamChange('isBullet', v, loanInput.isBullet)} />
                    <Label>Enabled</Label>
                 </div>
               </Card>
@@ -468,6 +533,7 @@ export default function LoanEngineDashboard() {
                         <TableHead className="text-right">Paid (I)</TableHead>
                         <TableHead className="text-right">Closing</TableHead>
                         <TableHead className="text-center">Status</TableHead>
+                        <TableHead className="text-center">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -483,24 +549,18 @@ export default function LoanEngineDashboard() {
                           <TableCell className="text-right font-code text-sm font-bold text-white">{row.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                           <TableCell className="text-center">
                             <Badge 
-                              className="cursor-pointer text-[9px] uppercase tracking-wider px-2"
+                              className="text-[9px] uppercase tracking-wider px-2"
                               variant={row.status === 'paid' ? 'default' : row.status === 'unpaid' ? 'destructive' : row.status === 'recalculated' ? 'secondary' : 'outline'}
-                              onClick={() => {
-                                const nextStatus: Record<LoanStatus, LoanStatus> = {
-                                  'projected': 'paid',
-                                  'paid': 'unpaid',
-                                  'unpaid': 'projected',
-                                  'recalculated': 'projected'
-                                };
-                                const newStatus = nextStatus[row.status] || 'projected';
-                                setLoanInput(prev => ({
-                                  ...prev,
-                                  periodStatuses: { ...(prev.periodStatuses || {}), [row.periodNumber]: newStatus }
-                                }));
-                              }}
                             >
                               {row.status}
                             </Badge>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {row.status === 'projected' && (
+                              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => handleMarkAsPaid(row.periodNumber)}>
+                                Mark Paid
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
