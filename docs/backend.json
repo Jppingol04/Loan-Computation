@@ -41,6 +41,10 @@
           "description": "The day-count convention for interest accrual.",
           "enum": ["30/360", "30/365", "ACT/360", "ACT/365"]
         },
+        "isBullet": {
+            "type": "boolean",
+            "description": "Flag indicating if the loan has a bullet repayment at maturity."
+        },
         "userId": {
           "type": "string",
           "description": "Reference to the user who owns this loan. (Relationship: User 1:N Loan)"
@@ -65,9 +69,35 @@
         "startDate",
         "currency",
         "dayCountConvention",
+        "isBullet",
         "userId",
         "createdAt"
       ]
+    },
+    "Drawdown": {
+      "title": "Drawdown",
+      "type": "object",
+      "description": "Represents a single drawdown of funds against a loan facility.",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "amount": { "type": "number" },
+        "userId": { "type": "string", "description": "Denormalized from parent loan for security rules." }
+      },
+      "required": ["id", "date", "amount", "userId"]
+    },
+    "ManualPayment": {
+      "title": "ManualPayment",
+      "type": "object",
+      "description": "Represents a manual payment made against a loan.",
+      "properties": {
+        "id": { "type": "string" },
+        "periodNumber": { "type": "number" },
+        "principalAmount": { "type": "number" },
+        "interestAmount": { "type": "number" },
+        "userId": { "type": "string", "description": "Denormalized from parent loan for security rules." }
+      },
+      "required": ["id", "periodNumber", "principalAmount", "interestAmount", "userId"]
     },
     "AmortizationPeriod": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -118,6 +148,10 @@
           "items": {
             "type": "string"
           }
+        },
+         "userId": {
+          "type": "string",
+          "description": "Denormalized from parent loan for security rules."
         }
       },
       "required": [
@@ -130,7 +164,8 @@
         "principalPortion",
         "totalPayment",
         "closingBalance",
-        "status"
+        "status",
+        "userId"
       ]
     },
     "InterestRateChange": {
@@ -163,18 +198,14 @@
           "type": "number",
           "description": "The annual interest rate before this change was applied."
         },
-        "remainingBalanceAtChange": {
-          "type": "number",
-          "description": "The opening balance of the loan at the effective period of the rate change, used as the new principal for recalculation."
-        },
         "changedAt": {
           "type": "string",
           "description": "Timestamp when the interest rate change was recorded.",
           "format": "date-time"
         },
-        "changedByUserId": {
+        "userId": {
           "type": "string",
-          "description": "Reference to the user who initiated this interest rate change. (Relationship: User 1:N InterestRateChange)"
+          "description": "Denormalized from parent loan for security rules."
         }
       },
       "required": [
@@ -184,9 +215,8 @@
         "effectiveFromPeriod",
         "reasonForChange",
         "oldAnnualRate",
-        "remainingBalanceAtChange",
         "changedAt",
-        "changedByUserId"
+        "userId"
       ]
     },
     "JournalEntry": {
@@ -310,15 +340,29 @@
         "definition": {
           "entityName": "Loan",
           "schema": {
-            "$ref": "#/backend/entities/Loan"
+            "$ref": "#/entities/Loan"
           },
-          "description": "Stores core loan parameters. Includes `userId` for direct ownership-based authorization.",
-          "params": [
-            {
-              "name": "loanId",
-              "description": "Unique identifier for the Loan document."
-            }
-          ]
+          "description": "Stores core loan parameters. Includes `userId` for direct ownership-based authorization."
+        }
+      },
+      {
+        "path": "/loans/{loanId}/drawdowns/{drawdownId}",
+        "definition": {
+          "entityName": "Drawdown",
+          "schema": {
+            "$ref": "#/entities/Drawdown"
+          },
+          "description": "Stores individual drawdown transactions for a loan."
+        }
+      },
+      {
+        "path": "/loans/{loanId}/manualPayments/{paymentId}",
+        "definition": {
+          "entityName": "ManualPayment",
+          "schema": {
+            "$ref": "#/entities/ManualPayment"
+          },
+          "description": "Stores individual manual payment transactions for a loan."
         }
       },
       {
@@ -326,19 +370,9 @@
         "definition": {
           "entityName": "AmortizationPeriod",
           "schema": {
-            "$ref": "#/backend/entities/AmortizationPeriod"
+            "$ref": "#/entities/AmortizationPeriod"
           },
-          "description": "Stores a single period's amortization details. Includes denormalized `userId` (loan owner's ID) for authorization independence.",
-          "params": [
-            {
-              "name": "loanId",
-              "description": "Unique identifier for the parent Loan document."
-            },
-            {
-              "name": "periodNumber",
-              "description": "The sequential number of the amortization period, serving as the document ID."
-            }
-          ]
+          "description": "Stores a single period's amortization details. Denormalized `userId` is used for authorization."
         }
       },
       {
@@ -346,19 +380,9 @@
         "definition": {
           "entityName": "InterestRateChange",
           "schema": {
-            "$ref": "#/backend/entities/InterestRateChange"
+            "$ref": "#/entities/InterestRateChange"
           },
-          "description": "Stores historical records of interest rate changes for a loan. Includes denormalized `loanOwnerUserId` (loan owner's ID) for authorization independence, in addition to `changedByUserId` (the actor).",
-          "params": [
-            {
-              "name": "loanId",
-              "description": "Unique identifier for the parent Loan document."
-            },
-            {
-              "name": "changeId",
-              "description": "Unique identifier for the InterestRateChange document."
-            }
-          ]
+          "description": "Stores historical records of interest rate changes for a loan. Denormalized `userId` is used for authorization."
         }
       },
       {
@@ -366,19 +390,9 @@
         "definition": {
           "entityName": "JournalEntry",
           "schema": {
-            "$ref": "#/backend/entities/JournalEntry"
+            "$ref": "#/entities/JournalEntry"
           },
-          "description": "Stores generated journal entries for specific periods of a loan. Includes denormalized `userId` (loan owner's ID) for authorization independence.",
-          "params": [
-            {
-              "name": "loanId",
-              "description": "Unique identifier for the parent Loan document."
-            },
-            {
-              "name": "entryId",
-              "description": "Unique identifier for the JournalEntry document."
-            }
-          ]
+          "description": "Stores generated journal entries for specific periods of a loan. Denormalized `userId` is used for authorization."
         }
       },
       {
@@ -386,22 +400,14 @@
         "definition": {
           "entityName": "AuditEntry",
           "schema": {
-            "$ref": "#/backend/entities/AuditEntry"
+            "$ref": "#/entities/AuditEntry"
           },
-          "description": "Stores immutable audit logs for actions related to a loan. Includes denormalized `loanOwnerUserId` (loan owner's ID) for authorization independence, in addition to `userId` (the actor).",
-          "params": [
-            {
-              "name": "loanId",
-              "description": "Unique identifier for the parent Loan document."
-            },
-            {
-              "name": "entryId",
-              "description": "Unique identifier for the AuditEntry document."
-            }
-          ]
+          "description": "Stores immutable audit logs for actions related to a loan. Denormalized `userId` is used for authorization."
         }
       }
     ],
-    "reasoning": "The Firestore structure for IFRS LoanGuard prioritizes security, scalability, and debuggability by adhering to core design principles, especially Authorization Independence and Query Against Paths (QAPs).\n\n**Authorization Independence via Denormalization:**\nTo achieve critical Authorization Independence, the design meticulously denormalizes the `userId` (representing the loan owner) into every document that is logically owned by or associated with a specific loan. This eliminates the need for expensive and complex `get()` calls within Firestore Security Rules, which would otherwise be required to check a parent document's `userId`. Instead, authorization rules can perform atomic checks directly on the `resource.data` of the document being accessed. For instance:\n1.  **`/loans/{loanId}`:** The `Loan` document itself inherently contains the `userId` of its owner.\n2.  **`/loans/{loanId}/schedule/{periodNumber}` (`AmortizationPeriod`) and `/loans/{loanId}/journalEntries/{entryId}` (`JournalEntry`):** These subcollection documents, while logically children of a `Loan`, do not originally include the loan owner's `userId`. To ensure Authorization Independence, a `userId` field, representing the loan owner, is explicitly added to these documents.\n3.  **`/loans/{loanId}/interestRateChanges/{changeId}` (`InterestRateChange`) and `/loans/{loanId}/auditTrail/{entryId}` (`AuditEntry`):** These entities already define a `userId` or `changedByUserId` field, which signifies the *actor* who performed the action. To avoid ambiguity and explicitly represent the *loan owner* for authorization purposes, a new field, `loanOwnerUserId`, is added to these documents. This clear distinction allows rules to verify `request.auth.uid` against the loan's owner without confusion with the action's performer. \nThis denormalization strategy ensures that a user's ownership can be verified directly on any document, simplifying security rules to `request.auth.uid == resource.data.userId` (or `loanOwnerUserId`), making them highly robust, performant, and easily debuggable.\n\n**Support for Query Against Paths (QAPs):**\nThe structural design, coupled with denormalized authorization fields, fully supports QAPs, ensuring secure and efficient list operations:\n1.  **Top-Level Queries (`/loans`):** Users can directly query for all loans they own by filtering on the `userId` field: `db.collection('loans').where('userId', '==', request.auth.uid)`. This query pattern is highly optimized by Firestore (requiring an index on `userId`) and is inherently secure because the security rules enforce `resource.data.userId == request.auth.uid` for every document returned, preventing unauthorized access.\n2.  **Subcollection Queries:** Once a user has identified a `loanId` they own (e.g., from a secure top-level query), they can then query its subcollections (e.g., `db.collection('loans').doc(loanId).collection('schedule')`). Even in these nested contexts, the presence of the denormalized `userId` (or `loanOwnerUserId`) in *every subcollection document* provides an additional layer of explicit security. This means that if a user somehow attempts to bypass the parent loan's authorization and directly queries a subcollection document with an `loanId` they don't own, the security rule for that subcollection document would independently fail the `resource.data.userId == request.auth.uid` check. This prevents data leakage and ensures that all `list` operations, whether on top-level collections or subcollections, are implicitly or explicitly filtered and secured by the authenticated user's UID.\n\n**Structural Segregation and Consistency:**\nAll data within the `loans` collection and its subcollections shares a homogeneous security posture: ownership by a single user. This eliminates the need for complex conditional logic in rules based on data types or public/private flags within the same collection. The use of descriptive wildcards (e.g., `{loanId}`, `{periodNumber}`, `{changeId}`, `{entryId}`) and standardized authorization field names ensures clarity and predictability across the data model."
+    "reasoning": "The Firestore structure for IFRS LoanGuard prioritizes security, scalability, and debuggability by adhering to core design principles, especially Authorization Independence and Query Against Paths (QAPs). To achieve this, the owner's `userId` is denormalized into every document that is logically owned by or associated with a specific user's loan. This eliminates the need for expensive and complex `get()` calls within Firestore Security Rules to check parent documents for ownership. Instead, authorization rules can perform atomic checks directly on the `resource.data` of the document being accessed (e.g., `request.auth.uid == resource.data.userId`). This strategy ensures that all queries, whether top-level on `/loans` or on any subcollection, are implicitly and securely filtered by the authenticated user's UID."
   }
 }
+
+    

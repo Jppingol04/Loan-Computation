@@ -1,3 +1,4 @@
+
 export type LoanStatus = 'projected' | 'paid' | 'unpaid' | 'recalculated';
 
 export type DayCountConvention = '30/360' | '30/365' | 'ACT/360' | 'ACT/365';
@@ -14,6 +15,13 @@ export interface ManualPayment {
   principalAmount: number;
   interestAmount: number;
   date?: string; // Optional metadata
+}
+
+export interface InterestRateChange {
+  id: string;
+  effectiveFromPeriod: number;
+  newAnnualRate: number;
+  reasonForChange: string;
 }
 
 export interface AmortizationPeriod {
@@ -40,8 +48,9 @@ export interface LoanInput {
   currency: string;
   dayCountConvention: DayCountConvention;
   isBullet: boolean;
-  drawdowns?: Drawdown[];
-  manualPayments?: ManualPayment[];
+  drawdowns: Drawdown[];
+  manualPayments: ManualPayment[];
+  rateChanges: InterestRateChange[];
   periodStatuses?: Record<number, LoanStatus>;
 }
 
@@ -110,12 +119,14 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     isBullet,
     drawdowns = [], 
     manualPayments = [],
+    rateChanges = [],
     periodStatuses = {}
   } = input;
   
   const originalStart = parseLocalDate(startDate);
-  const rate = annualInterestRate / 100;
-
+  
+  const sortedRateChanges = [...rateChanges].sort((a, b) => a.effectiveFromPeriod - b.effectiveFromPeriod);
+  
   let earliestDate = new Date(originalStart);
   drawdowns.forEach(d => {
     const dDate = parseLocalDate(d.date);
@@ -125,15 +136,23 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   const calcStart = new Date(earliestDate.getFullYear(), earliestDate.getMonth(), 1);
   const originalEnd = new Date(originalStart.getFullYear(), originalStart.getMonth() + termInMonths, 0);
   
-  const totalMonths = (originalEnd.getFullYear() - calcStart.getFullYear()) * 12 + (originalEnd.getMonth() - calcStart.getMonth());
+  const totalMonths = (originalEnd.getFullYear() - calcStart.getFullYear()) * 12 + (originalEnd.getMonth() - calcStart.getMonth()) + 1;
 
-  // Track principal and interest separately to avoid compounding
   let principalBalance = 0;
   let interestBalance = 0;
   let principalInjected = false;
   let cumulativeInterest = 0;
+  let currentAnnualRate = annualInterestRate;
 
   for (let i = 1; i <= Math.max(1, totalMonths); i++) {
+    // Determine current rate for the period
+    for (const rc of sortedRateChanges) {
+      if (i >= rc.effectiveFromPeriod) {
+        currentAnnualRate = rc.newAnnualRate;
+      }
+    }
+    const rate = currentAnnualRate / 100;
+    
     const targetDate = new Date(calcStart.getFullYear(), calcStart.getMonth() + i, 0);
     const dateStr = toDateString(targetDate);
     const prevPeriodEnd = i === 1 
@@ -142,11 +161,8 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
 
     const yearBasis = getYearBasis(dayCountConvention);
 
-    // 1. Accrue interest ONLY on Principal Balance (Simple Interest)
-    const totalDaysInPeriod = calculateDays(prevPeriodEnd, targetDate, dayCountConvention);
-    let interestAccrual = principalBalance * rate * (totalDaysInPeriod / yearBasis);
+    let interestAccrual = principalBalance * rate * (calculateDays(prevPeriodEnd, targetDate, dayCountConvention) / yearBasis);
 
-    // 2. Intra-month Initial Principal Accrual
     if (!principalInjected && targetDate >= originalStart) {
       const effectiveStart = originalStart.getDate() === 1 
         ? new Date(originalStart.getFullYear(), originalStart.getMonth(), 0)
@@ -159,7 +175,6 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       principalInjected = true;
     }
 
-    // 3. Intra-month drawdowns
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = parseLocalDate(d.date);
       return dDate > prevPeriodEnd && dDate <= targetDate;
@@ -176,36 +191,39 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     });
 
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
-    principalBalance += drawdownAmount; // Drawdowns increase principal base
+    principalBalance += drawdownAmount;
     
-    // 4. Payments
     const manualPmtList = manualPayments.filter(p => p.periodNumber === i);
     let principalPaid = manualPmtList.reduce((acc, p) => acc + p.principalAmount, 0);
     let interestPaid = manualPmtList.reduce((acc, p) => acc + p.interestAmount, 0);
 
-    // 5. Bullet Settlement at Maturity
     if (i === totalMonths && isBullet) {
-      principalPaid = Number(principalBalance.toFixed(2));
-      interestPaid = Number((interestBalance + interestAccrual).toFixed(2));
+      principalPaid += Number(principalBalance.toFixed(2));
+      interestPaid += Number((interestBalance + interestAccrual).toFixed(2));
     }
 
     interestAccrual = Number(interestAccrual.toFixed(2));
     interestBalance += interestAccrual;
     
-    // Apply payments
     principalBalance = Number((principalBalance - principalPaid).toFixed(2));
     interestBalance = Number((interestBalance - interestPaid).toFixed(2));
     
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
     let status: LoanStatus = periodStatuses[i] || (manualPmtList.length > 0 ? 'paid' : 'projected');
+    if (applicableRateChange && applicableRateChange.effectiveFromPeriod === i) {
+        status = 'recalculated';
+    }
+
 
     const totalOutstanding = Number((principalBalance + interestBalance).toFixed(2));
+    
+    const openingBal = Number((principalBalance + principalPaid + interestBalance + interestPaid - interestAccrual - drawdownAmount).toFixed(2));
 
     schedule.push({
       periodNumber: i,
       date: dateStr,
-      openingBalance: Number((principalBalance + principalPaid + interestBalance + interestPaid - interestAccrual - drawdownAmount).toFixed(2)),
+      openingBalance: openingBal,
       drawdownAmount,
       interestAccrual,
       principalPaid,
@@ -217,8 +235,10 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       status,
     });
 
-    if (totalOutstanding <= 0 && i >= totalMonths) break;
+    if (totalOutstanding <= 0.01 && i >= totalMonths) break;
   }
 
   return schedule;
 }
+
+    

@@ -1,3 +1,4 @@
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -16,7 +17,7 @@ service cloud.firestore {
      * 
      * KEY SECURITY DECISIONS:
      * 1. Authorization Independence: To maximize performance and simplify rules, the owner's 
-     *    UID (userId or loanOwnerUserId) is denormalized into every single document. 
+     *    UID (userId) is denormalized into every single document. 
      *    This allows rules to verify access using the document's own data without 
      *    expensive get() calls to parent documents.
      * 2. Relational Integrity: During creation, the rules enforce that the internal 
@@ -82,18 +83,40 @@ service cloud.firestore {
         allow delete: if isExistingOwner(resource.data.userId);
       }
 
+       /**
+       * @description Records of funds drawn against the facility.
+       * @path /loans/{loanId}/drawdowns/{drawdownId}
+       */
+      match /drawdowns/{drawdownId} {
+        allow get, list: if isOwner(resource.data.userId);
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow update: if isExistingOwner(resource.data.userId) && isOwnerImmutable('userId');
+        allow delete: if isExistingOwner(resource.data.userId);
+      }
+
+      /**
+       * @description Records of manual payments made.
+       * @path /loans/{loanId}/manualPayments/{paymentId}
+       */
+      match /manualPayments/{paymentId} {
+        allow get, list: if isOwner(resource.data.userId);
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow update: if isExistingOwner(resource.data.userId) && isOwnerImmutable('userId');
+        allow delete: if isExistingOwner(resource.data.userId);
+      }
+      
       /**
        * @description Log of interest rate changes for prospective recalculations.
        * @path /loans/{loanId}/interestRateChanges/{changeId}
-       * @allow (create) Signed-in user where loanOwnerUserId field matches their UID.
+       * @allow (create) Signed-in user where userId field matches their UID.
        * @deny (delete) If the user is not the owner of the loan.
        * @principle Explicit distinction between the actor (changedBy) and owner (loanOwnerUserId).
        */
       match /interestRateChanges/{changeId} {
-        allow get, list: if isOwner(resource.data.loanOwnerUserId);
-        allow create: if isSignedIn() && request.resource.data.loanOwnerUserId == request.auth.uid;
-        allow update: if isExistingOwner(resource.data.loanOwnerUserId) && isOwnerImmutable('loanOwnerUserId');
-        allow delete: if isExistingOwner(resource.data.loanOwnerUserId);
+        allow get, list: if isOwner(resource.data.userId);
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow update: if isExistingOwner(resource.data.userId) && isOwnerImmutable('userId');
+        allow delete: if isExistingOwner(resource.data.userId);
       }
 
       /**
@@ -118,11 +141,13 @@ service cloud.firestore {
        * @principle Enforces path consistency and ownership for audit logs.
        */
       match /auditTrail/{entryId} {
-        allow get, list: if isOwner(resource.data.loanOwnerUserId);
-        allow create: if isSignedIn() && request.resource.data.loanOwnerUserId == request.auth.uid;
+        allow get, list: if isOwner(resource.data.userId);
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
         allow update: if false; // Audit logs should not be modified
-        allow delete: if isExistingOwner(resource.data.loanOwnerUserId);
+        allow delete: if isExistingOwner(resource.data.userId);
       }
     }
   }
 }
+
+    
