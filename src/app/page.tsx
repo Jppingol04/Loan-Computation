@@ -279,7 +279,7 @@ export default function LoanEngineDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <Button variant="outline" size="sm" className="border-white/10" onClick={() => setIsImportOpen(true)}><Upload className="h-4 w-4 mr-2" /> Bulk Import</Button>
-            <Button size="sm" onClick={() => exportToExcel(schedule, loanInput.loanName)} className="shadow-lg shadow-primary/25 bg-primary hover:bg-primary/90"><FileSpreadsheet className="h-4 w-4 mr-2" /> Export Excel</Button>
+            <Button size="sm" onClick={() => exportToExcel(schedule, loanInput)} className="shadow-lg shadow-primary/25 bg-primary hover:bg-primary/90"><FileSpreadsheet className="h-4 w-4 mr-2" /> Export Excel</Button>
           </div>
         </div>
       </header>
