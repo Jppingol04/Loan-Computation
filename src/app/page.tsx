@@ -64,22 +64,16 @@ export default function LoanEngineDashboard() {
     if (!dateStr) return '';
     const cleanStr = dateStr.trim();
     
-    // Attempt parsing various common formats (YYYY-MM-DD, DD/MM/YYYY, etc)
     const parts = cleanStr.split(/[-/.]/);
     if (parts.length === 3) {
       let y, m, d;
       if (parts[0].length === 4) {
-        // YYYY-MM-DD
         [y, m, d] = parts;
       } else if (parts[2].length === 4) {
-        // DD/MM/YYYY or MM/DD/YYYY
-        // We assume DD/MM/YYYY for international consistency unless it's obviously MM/DD
         const first = parseInt(parts[0]);
-        const second = parseInt(parts[1]);
         if (first > 12) {
           [d, m, y] = parts;
         } else {
-          // Default to DD/MM/YYYY
           [d, m, y] = parts;
         }
       }
@@ -88,7 +82,6 @@ export default function LoanEngineDashboard() {
       }
     }
 
-    // Fallback to standard JS parsing (can be inconsistent but better than nothing)
     try {
       const dt = new Date(cleanStr);
       if (!isNaN(dt.getTime())) {
@@ -96,16 +89,15 @@ export default function LoanEngineDashboard() {
       }
     } catch (e) {}
     
-    return cleanStr; // Return as is if all else fails
+    return cleanStr;
   };
 
-  // Core calculation logic
   const performCalculation = (input: LoanInput) => {
     setIsComputing(true);
     try {
       const newSchedule = generateAmortizationSchedule(input);
       setSchedule(newSchedule);
-      logAudit('Schedule Recomputed', `Recalculated accruals for ${input.loanName} across ${input.termInMonths} periods.`);
+      logAudit('Schedule Recomputed', `Recalculated accruals for ${input.loanName}.`);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Calculation Error", description: err.message });
     } finally {
@@ -113,7 +105,6 @@ export default function LoanEngineDashboard() {
     }
   };
 
-  // Automatically compute on input changes
   useEffect(() => {
     performCalculation(loanInput);
   }, [loanInput]);
@@ -218,7 +209,6 @@ export default function LoanEngineDashboard() {
           return;
         }
 
-        // Functional update to ensure we use the latest state and trigger the re-calculation
         setLoanInput(prev => {
           const updated = {
             ...prev,
@@ -229,21 +219,20 @@ export default function LoanEngineDashboard() {
         });
         
         setIsImportOpen(false);
-        toast({ title: "Import Successful", description: `Loaded ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments. Ledger will recompute.` });
+        toast({ title: "Import Successful", description: `Loaded ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments. Schedule updated.` });
         logAudit('Bulk Import', `Imported ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments from CSV.`);
       },
       error: (err) => {
         toast({ variant: "destructive", title: "Import Error", description: err.message });
       }
     });
-    // Reset file input
     e.target.value = '';
   };
 
   const handleDownloadTemplate = () => {
     const headers = "type,date,amount,period,principal,interest\n";
-    const example1 = "drawdown,2026-01-23,50000000,,\n";
-    const example2 = "payment,, ,1,10000,5000\n";
+    const example1 = "drawdown,2024-06-15,25000000,,\n";
+    const example2 = "payment,, ,1,50000,12000\n";
     downloadCSV("loan_import_template.csv", headers + example1 + example2);
     toast({ title: "Template Downloaded", description: "Follow the column format to import historical data." });
   };
@@ -327,7 +316,7 @@ export default function LoanEngineDashboard() {
                   <div className="space-y-4">
                     <div className="space-y-2"><Label>Facility Reference</Label><Input className="bg-slate-800 border-white/10" value={loanInput.loanName} onChange={e => setLoanInput({...loanInput, loanName: e.target.value})} /></div>
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2"><Label>Principal</Label><Input type="number" className="bg-slate-800 border-white/10" value={loanInput.principalAmount} onChange={e => setLoanInput({...loanInput, principalAmount: Number(e.target.value)})} /></div>
+                      <div className="space-y-2"><Label>Base Principal</Label><Input type="number" className="bg-slate-800 border-white/10" value={loanInput.principalAmount} onChange={e => setLoanInput({...loanInput, principalAmount: Number(e.target.value)})} /></div>
                       <div className="space-y-2"><Label>Currency</Label><Select value={loanInput.currency} onValueChange={v => setLoanInput({...loanInput, currency: v})}><SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="USD">USD</SelectItem><SelectItem value="AED">AED</SelectItem><SelectItem value="EUR">EUR</SelectItem></SelectContent></Select></div>
                     </div>
                   </div>
@@ -336,7 +325,7 @@ export default function LoanEngineDashboard() {
                       <div className="space-y-2"><Label>Rate (%)</Label><Input type="number" step="0.01" className="bg-slate-800 border-white/10" value={loanInput.annualInterestRate} onChange={e => setLoanInput({...loanInput, annualInterestRate: Number(e.target.value)})} /></div>
                       <div className="space-y-2"><Label>Term (Mo)</Label><Input type="number" className="bg-slate-800 border-white/10" value={loanInput.termInMonths} onChange={e => setLoanInput({...loanInput, termInMonths: Number(e.target.value)})} /></div>
                     </div>
-                    <div className="space-y-2"><Label>Convention</Label><Select value={loanInput.dayCountConvention} onValueChange={v => setLoanInput({...loanInput, dayCountConvention: v as DayCountConvention})}><SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30/360">30/360 (Standard)</SelectItem><SelectItem value="30/365">30/365</SelectItem><SelectItem value="ACT/360">ACT/360 (Actual/360)</SelectItem><SelectItem value="ACT/365">ACT/365 (Actual/365)</SelectItem></SelectContent></Select></div>
+                    <div className="space-y-2"><Label>Convention</Label><Select value={loanInput.dayCountConvention} onValueChange={v => setLoanInput({...loanInput, dayCountConvention: v as DayCountConvention})}><SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30/360">30/360</SelectItem><SelectItem value="30/365">30/365</SelectItem><SelectItem value="ACT/360">ACT/360</SelectItem><SelectItem value="ACT/365">ACT/365</SelectItem></SelectContent></Select></div>
                   </div>
                 </CardContent>
               </Card>
@@ -344,11 +333,11 @@ export default function LoanEngineDashboard() {
                 <div className="p-3 bg-primary/10 rounded-full text-primary"><Calculator className="h-8 w-8" /></div>
                 <div>
                   <h3 className="font-bold">Bullet Repayment</h3>
-                  <p className="text-xs text-muted-foreground mt-1">Settle full principal at maturity</p>
+                  <p className="text-xs text-muted-foreground mt-1">Settles full balance at maturity</p>
                 </div>
                 <div className="flex items-center space-x-2">
                    <Switch checked={loanInput.isBullet} onCheckedChange={(v) => setLoanInput({...loanInput, isBullet: v})} />
-                   <Label>Enable Bullet</Label>
+                   <Label>Enabled</Label>
                 </div>
               </Card>
             </div>
@@ -382,9 +371,6 @@ export default function LoanEngineDashboard() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {(!loanInput.drawdowns || loanInput.drawdowns.length === 0) && (
-                      <TableRow><TableCell colSpan={3} className="text-center py-8 text-muted-foreground italic">No incremental drawdowns recorded.</TableCell></TableRow>
-                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -421,9 +407,6 @@ export default function LoanEngineDashboard() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {(!loanInput.manualPayments || loanInput.manualPayments.length === 0) && (
-                      <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground italic">No manual settlement records found.</TableCell></TableRow>
-                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -435,7 +418,7 @@ export default function LoanEngineDashboard() {
               <CardHeader className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/5 pb-6 gap-4">
                 <div>
                   <CardTitle className="flex items-center gap-2">Amortization Ledger <Badge variant="outline" className="text-[10px]">{loanInput.dayCountConvention}</Badge></CardTitle>
-                  <CardDescription>Calendar month-end accruals based on selected day-count basis.</CardDescription>
+                  <CardDescription>Calendar month-end accruals including all historical imported data.</CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button 
@@ -446,7 +429,7 @@ export default function LoanEngineDashboard() {
                     className="bg-blue-600 hover:bg-blue-700 text-white border-none shadow-md"
                   >
                     <PlayCircle className={`h-4 w-4 mr-2 ${isComputing ? 'animate-spin' : ''}`} /> 
-                    Compute Accruals
+                    Sync & Compute
                   </Button>
                   <Select value={yearFilter} onValueChange={setYearFilter}><SelectTrigger className="w-[120px] bg-slate-800 border-white/10"><SelectValue placeholder="Year" /></SelectTrigger><SelectContent><SelectItem value="all">All Years</SelectItem>{availableYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}</SelectContent></Select>
                   <Button variant="outline" size="sm" onClick={() => downloadCSV(`${loanInput.loanName}.csv`, generateAmortizationCSV(schedule))} className="border-white/10"><Download className="h-4 w-4 mr-2" /> Export CSV</Button>
@@ -481,7 +464,7 @@ export default function LoanEngineDashboard() {
                           <TableCell className="text-right font-code text-sm font-bold text-white">{row.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                           <TableCell className="text-center">
                             <Badge 
-                              className="cursor-pointer hover:scale-110 transition-transform text-[9px] uppercase tracking-wider px-2"
+                              className="cursor-pointer text-[9px] uppercase tracking-wider px-2"
                               variant={row.status === 'paid' ? 'default' : row.status === 'unpaid' ? 'destructive' : row.status === 'recalculated' ? 'secondary' : 'outline'}
                               onClick={() => {
                                 const nextStatus: Record<LoanStatus, LoanStatus> = {
@@ -524,7 +507,7 @@ export default function LoanEngineDashboard() {
                     </div>
                     <ChevronRight className="h-4 w-4 text-white/10" />
                   </div>
-                )) : <div className="text-center py-16 text-muted-foreground italic text-sm">No audit events logged in this session.</div>}
+                )) : <div className="text-center py-16 text-muted-foreground italic text-sm">No audit events logged.</div>}
               </CardContent>
             </Card>
           </TabsContent>
@@ -536,7 +519,7 @@ export default function LoanEngineDashboard() {
           <DialogContent className="bg-slate-900 border-white/10 text-white">
             <DialogHeader>
               <DialogTitle>Bulk Accrual Import</DialogTitle>
-              <DialogDescription>Upload CSV to populate drawdowns and settlements across multiple fiscal years.</DialogDescription>
+              <DialogDescription>Upload CSV to populate drawdowns and settlements across any year.</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 pt-4">
               <div 
@@ -545,7 +528,7 @@ export default function LoanEngineDashboard() {
               >
                 <Upload className="h-10 w-10 text-primary" />
                 <p className="text-sm font-medium">Click to select CSV file</p>
-                <p className="text-[10px] text-muted-foreground">Headers: type, date, amount, period, principal, interest</p>
+                <p className="text-[10px] text-muted-foreground">Example: drawdown, 2024-06-15, 25000000</p>
                 <input 
                   type="file" 
                   ref={fileInputRef} 

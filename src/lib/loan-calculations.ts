@@ -49,7 +49,6 @@ export interface LoanInput {
 function parseLocalDate(dateStr: string): Date {
   if (!dateStr) return new Date();
   
-  // Try YYYY-MM-DD
   const parts = dateStr.split(/[-/.]/);
   if (parts.length === 3) {
     let y, m, d;
@@ -60,7 +59,6 @@ function parseLocalDate(dateStr: string): Date {
       // DD/MM/YYYY
       [d, m, y] = parts.map(Number);
     } else {
-      // Fallback to standard
       return new Date(dateStr);
     }
     return new Date(y, m - 1, d);
@@ -115,35 +113,51 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     periodStatuses = {}
   } = input;
   
-  const start = parseLocalDate(startDate);
+  const originalStart = parseLocalDate(startDate);
   const rate = annualInterestRate / 100;
 
-  // Initial balance includes drawdowns on or before the start date
-  const initialDrawdownAmount = drawdowns
-    .filter(d => parseLocalDate(d.date) <= start)
-    .reduce((acc, d) => acc + d.amount, 0);
+  // Determine the EARLIEST relevant date (Start Date or any Drawdown)
+  let earliestDate = new Date(originalStart);
+  drawdowns.forEach(d => {
+    const dDate = parseLocalDate(d.date);
+    if (dDate < earliestDate) earliestDate = new Date(dDate);
+  });
 
-  let currentBalance = principalAmount + initialDrawdownAmount;
+  // Align calculation start to the beginning of the earliest month
+  const calcStart = new Date(earliestDate.getFullYear(), earliestDate.getMonth(), 1);
+  const originalEnd = new Date(originalStart.getFullYear(), originalStart.getMonth() + termInMonths, 0);
+  
+  // Total months to calculate (from earliest event to intended maturity)
+  const totalMonths = (originalEnd.getFullYear() - calcStart.getFullYear()) * 12 + (originalEnd.getMonth() - calcStart.getMonth());
+
+  let currentBalance = 0;
+  // If the loan has an initial principal that isn't represented as a drawdown, 
+  // we add it at the original Start Date or the first period.
+  let principalInjected = false;
   let cumulativeInterest = 0;
 
-  for (let i = 1; i <= termInMonths; i++) {
-    const targetDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
+  for (let i = 1; i <= Math.max(1, totalMonths); i++) {
+    const targetDate = new Date(calcStart.getFullYear(), calcStart.getMonth() + i, 0);
     const dateStr = toDateString(targetDate);
-
     const prevPeriodEnd = i === 1 
-      ? new Date(start) 
-      : new Date(start.getFullYear(), start.getMonth() + i - 1, 0);
+      ? new Date(calcStart.getFullYear(), calcStart.getMonth(), 0)
+      : new Date(calcStart.getFullYear(), calcStart.getMonth() + i - 1, 0);
 
     const yearBasis = getYearBasis(dayCountConvention);
-    
-    // 1. Accrue interest on Opening Balance for the whole period
+
+    // Inject principal if we reach the original start date and haven't yet
+    if (!principalInjected && targetDate >= originalStart) {
+      currentBalance += principalAmount;
+      principalInjected = true;
+    }
+
+    // 1. Accrue interest on Opening Balance
     const totalDaysInPeriod = calculateDays(prevPeriodEnd, targetDate, dayCountConvention);
     let interestAccrual = currentBalance * rate * (totalDaysInPeriod / yearBasis);
 
-    // 2. Accrue interest for intra-month drawdowns (prospective from drawdown date)
+    // 2. Intra-month drawdowns
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = parseLocalDate(d.date);
-      // Only drawdowns occurring WITHIN this period
       return dDate > prevPeriodEnd && dDate <= targetDate;
     });
 
@@ -155,16 +169,19 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
 
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
     
+    // 3. Payments
+    // Find matching payments. Note: manualPayments currently use "periodNumber" 
+    // which might need to be shifted if calcStart != originalStart.
+    // For now, we align them to the month sequence.
     const manualPmtList = manualPayments.filter(p => p.periodNumber === i);
     let principalPaid = manualPmtList.reduce((acc, p) => acc + p.principalAmount, 0);
     let interestPaid = manualPmtList.reduce((acc, p) => acc + p.interestAmount, 0);
 
-    if (i === termInMonths && isBullet) {
-      const totalOutstanding = currentBalance + drawdownAmount + interestAccrual - principalPaid - interestPaid;
-      if (totalOutstanding > 0) {
-        principalPaid = Number((currentBalance + drawdownAmount - principalPaid).toFixed(2));
-        interestPaid = Number((interestAccrual - interestPaid).toFixed(2));
-      }
+    // 4. Bullet Settlement at Maturity
+    if (i === totalMonths && isBullet) {
+      const totalOutstandingPrincipal = currentBalance + drawdownAmount;
+      principalPaid = Number(totalOutstandingPrincipal.toFixed(2));
+      interestPaid = Number(interestAccrual.toFixed(2));
     }
 
     interestAccrual = Number(interestAccrual.toFixed(2));
@@ -189,6 +206,9 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     });
 
     currentBalance = Math.max(0, closingBalance);
+    
+    // Stop if balance is zeroed and we've passed the original term
+    if (currentBalance <= 0 && i >= totalMonths) break;
   }
 
   return schedule;
