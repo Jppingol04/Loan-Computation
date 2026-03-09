@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "Loan": {
@@ -35,6 +36,11 @@
           "type": "string",
           "description": "The currency code for the loan (e.g., AED, USD, EUR, GBP, PHP)."
         },
+        "dayCountConvention": {
+          "type": "string",
+          "description": "The day-count convention for interest accrual.",
+          "enum": ["30/360", "30/365", "ACT/360", "ACT/365"]
+        },
         "userId": {
           "type": "string",
           "description": "Reference to the user who owns this loan. (Relationship: User 1:N Loan)"
@@ -58,6 +64,7 @@
         "termMonths",
         "startDate",
         "currency",
+        "dayCountConvention",
         "userId",
         "createdAt"
       ]

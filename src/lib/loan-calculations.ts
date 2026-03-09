@@ -1,4 +1,7 @@
-export type LoanStatus = 'projected' | 'paid' | 'unpaid';
+
+export type LoanStatus = 'projected' | 'paid' | 'unpaid' | 'recalculated';
+
+export type DayCountConvention = '30/360' | '30/365' | 'ACT/360' | 'ACT/365';
 
 export interface Drawdown {
   id: string;
@@ -25,6 +28,8 @@ export interface AmortizationPeriod {
   closingBalance: number;
   cumulativeInterest: number;
   status: LoanStatus;
+  totalPayment: number; // Added for annuity calculations
+  principalPortion: number; // Added for annuity calculations
 }
 
 export interface LoanInput {
@@ -34,6 +39,7 @@ export interface LoanInput {
   termInMonths: number;
   startDate: string;
   currency: string;
+  dayCountConvention: DayCountConvention;
   isBullet: boolean; // Whether to automatically repay remaining principal at maturity
   drawdowns?: Drawdown[];
   manualPayments?: ManualPayment[];
@@ -60,19 +66,48 @@ function toDateString(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-export function calculateMonthsBetween(start: string, end: string): number {
-  const startDate = parseLocalDate(start);
-  const endDate = parseLocalDate(end);
-  return (
-    (endDate.getFullYear() - startDate.getFullYear()) * 12 +
-    (endDate.getMonth() - startDate.getMonth())
-  );
+/**
+ * Calculates days between two dates based on convention.
+ */
+function calculateDays(start: Date, end: Date, convention: DayCountConvention): number {
+  if (convention === '30/360') {
+    let d1 = start.getDate();
+    let m1 = start.getMonth() + 1;
+    let y1 = start.getFullYear();
+    let d2 = end.getDate();
+    let m2 = end.getMonth() + 1;
+    let y2 = end.getFullYear();
+
+    if (d1 === 31) d1 = 30;
+    if (d2 === 31 && d1 >= 30) d2 = 30;
+
+    return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1);
+  }
+  
+  if (convention === '30/365') {
+    // Standard 30/365: months are 30 days, year is 365.
+    // However, some implementations treat it as actual days / 365 but limiting months.
+    // We'll follow the simple rule: (Months * 30) + DayDiff.
+    let m1 = start.getMonth() + 1;
+    let y1 = start.getFullYear();
+    let m2 = end.getMonth() + 1;
+    let y2 = end.getFullYear();
+    let d1 = Math.min(start.getDate(), 30);
+    let d2 = Math.min(end.getDate(), 30);
+    
+    return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1); 
+  }
+
+  // ACT conventions
+  const diffTime = Math.abs(end.getTime() - start.getTime());
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 }
 
-/**
- * Generates an IFRS 9 schedule based on calendar End of Month (EOM) dates.
- * Each period corresponds to the end of a calendar month starting from the loan's inception.
- */
+function getYearBasis(convention: DayCountConvention): number {
+  if (convention.endsWith('360')) return 360;
+  return 365;
+}
+
 export function generateAmortizationSchedule(input: LoanInput): AmortizationPeriod[] {
   const schedule: AmortizationPeriod[] = [];
   const { 
@@ -80,77 +115,62 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     annualInterestRate, 
     termInMonths, 
     startDate, 
+    dayCountConvention = '30/360',
     isBullet,
     drawdowns = [], 
     manualPayments = [],
     periodStatuses = {}
   } = input;
   
-  const monthlyRate = (annualInterestRate || 0) / 12 / 100;
   const start = parseLocalDate(startDate);
+  const rate = annualInterestRate / 100;
 
-  // Aggregate drawdowns that happened AT or BEFORE the exact start date as "Initial"
-  const initialDrawdowns = drawdowns.filter(d => {
-    const dDate = parseLocalDate(d.date);
-    return dDate <= start;
-  });
-  const initialDrawdownAmount = initialDrawdowns.reduce((acc, d) => acc + d.amount, 0);
+  // Aggregate drawdowns at or before start
+  const initialDrawdownAmount = drawdowns
+    .filter(d => parseLocalDate(d.date) <= start)
+    .reduce((acc, d) => acc + d.amount, 0);
 
-  let currentBalance = (principalAmount || 0) + initialDrawdownAmount;
+  let currentBalance = principalAmount + initialDrawdownAmount;
   let cumulativeInterest = 0;
 
-  for (let i = 1; i <= (termInMonths || 1); i++) {
-    // Calculate the End of Month (EOM) for this period.
-    // If the loan starts in Month M, Period 1 is the end of Month M.
-    // However, if the start date is already at EOM, it usually rolls to the next month end.
-    // For simplicity in this accrual engine, Period 1 is the EOM of the current month.
-    let targetDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
+  for (let i = 1; i <= termInMonths; i++) {
+    // Period end date (EOM)
+    const targetDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
     const dateStr = toDateString(targetDate);
 
-    // Calculate the period window (Previous period end to current period end)
-    let prevPeriodEnd: Date;
-    if (i === 1) {
-      prevPeriodEnd = new Date(start);
-    } else {
-      // Previous period end was the EOM of the previous iteration
-      prevPeriodEnd = new Date(start.getFullYear(), start.getMonth() + i - 1, 0);
-    }
+    // Period window
+    const prevPeriodEnd = i === 1 
+      ? new Date(start) 
+      : new Date(start.getFullYear(), start.getMonth() + i - 1, 0);
 
-    // Filter drawdowns falling strictly within this calendar month window
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = parseLocalDate(d.date);
       return dDate > prevPeriodEnd && dDate <= targetDate;
     });
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
     
-    // Interest accrues on the balance including new drawdowns for simplicity.
-    // In a high-fidelity model, this would use daily average balance (DAB).
-    const balanceForInterest = currentBalance + drawdownAmount;
-    const interestAccrual = Number((balanceForInterest * monthlyRate).toFixed(2));
+    // Interest Calculation
+    const days = calculateDays(prevPeriodEnd, targetDate, dayCountConvention);
+    const yearBasis = getYearBasis(dayCountConvention);
+    const interestAccrual = Number((currentBalance * rate * (days / yearBasis)).toFixed(2));
     
     const manualPmtList = manualPayments.filter(p => p.periodNumber === i);
     let principalPaid = manualPmtList.reduce((acc, p) => acc + p.principalAmount, 0);
     let interestPaid = manualPmtList.reduce((acc, p) => acc + p.interestAmount, 0);
 
-    // Bullet Repayment Logic at Maturity (End of term)
+    // Bullet Repayment Logic at Maturity
     if (i === termInMonths && isBullet) {
-      // If user hasn't manually fully settled, the bullet settles everything.
-      const totalOutstanding = balanceForInterest + interestAccrual - principalPaid - interestPaid;
+      const totalOutstanding = currentBalance + interestAccrual - principalPaid - interestPaid;
       if (totalOutstanding > 0) {
-        principalPaid = Number((principalPaid + (balanceForInterest - principalPaid)).toFixed(2));
-        interestPaid = Number((interestPaid + (interestAccrual - interestPaid)).toFixed(2));
+        principalPaid = Number((currentBalance - principalPaid).toFixed(2));
+        interestPaid = Number((interestAccrual - interestPaid).toFixed(2));
       }
     }
 
-    const closingBalance = Number((balanceForInterest + interestAccrual - principalPaid - interestPaid).toFixed(2));
+    const closingBalance = Number((currentBalance + drawdownAmount + interestAccrual - principalPaid - interestPaid).toFixed(2));
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
-    let status: LoanStatus = 'projected';
-    if (periodStatuses[i]) {
-      status = periodStatuses[i];
-    } else if (manualPmtList.length > 0) {
-      status = 'paid';
-    }
+    let status: LoanStatus = periodStatuses[i] || (manualPmtList.length > 0 ? 'paid' : 'projected');
 
     schedule.push({
       periodNumber: i,
@@ -160,6 +180,8 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       interestAccrual,
       principalPaid,
       interestPaid,
+      principalPortion: principalPaid,
+      totalPayment: principalPaid + interestPaid,
       closingBalance: Math.max(0, closingBalance),
       cumulativeInterest,
       status,
