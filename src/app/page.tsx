@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
-import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet } from 'lucide-react';
+import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet, FileText, Eraser } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import Papa from 'papaparse';
 import { 
@@ -85,6 +85,12 @@ export default function LoanEngineDashboard() {
     logAudit('Drawdown Added', `New drawdown of ${newDrawdown.amount} on ${newDrawdown.date}.`);
   };
 
+  const handleClearDrawdowns = () => {
+    setLoanInput(prev => ({ ...prev, drawdowns: [] }));
+    logAudit('Drawdowns Cleared', 'All drawdown records were removed.');
+    toast({ title: "Drawdowns Cleared", description: "All incremental exposure records have been removed." });
+  };
+
   const handleAddPayment = () => {
     if (newPayment.periodNumber < 1 || (newPayment.principal <= 0 && newPayment.interest <= 0)) {
       toast({ variant: "destructive", title: "Invalid Payment", description: "Provide a valid period and payment amount." });
@@ -101,22 +107,10 @@ export default function LoanEngineDashboard() {
     logAudit('Payment Recorded', `Payment for Month ${newPayment.periodNumber} recorded.`);
   };
 
-  const togglePeriodStatus = (periodNumber: number) => {
-    const currentStatus = schedule.find(p => p.periodNumber === periodNumber)?.status || 'projected';
-    let nextStatus: LoanStatus = 'projected';
-    
-    if (currentStatus === 'projected') nextStatus = 'paid';
-    else if (currentStatus === 'paid') nextStatus = 'unpaid';
-    else if (currentStatus === 'unpaid') nextStatus = 'projected';
-
-    setLoanInput(prev => ({
-      ...prev,
-      periodStatuses: {
-        ...(prev.periodStatuses || {}),
-        [periodNumber]: nextStatus
-      }
-    }));
-    logAudit('Status Change', `Period ${periodNumber} status updated to ${nextStatus}.`);
+  const handleClearPayments = () => {
+    setLoanInput(prev => ({ ...prev, manualPayments: [] }));
+    logAudit('Payments Cleared', 'All manual settlement records were removed.');
+    toast({ title: "Payments Cleared", description: "All historical settlement records have been removed." });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -126,6 +120,7 @@ export default function LoanEngineDashboard() {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      transformHeader: (header) => header.trim().toLowerCase(),
       complete: (results) => {
         const data = results.data as any[];
         const importedDrawdowns: Drawdown[] = [];
@@ -133,21 +128,32 @@ export default function LoanEngineDashboard() {
 
         data.forEach(row => {
           const type = row.type?.toLowerCase();
-          if (type === 'drawdown') {
+          const amount = parseFloat(row.amount?.replace(/,/g, '')) || 0;
+          const principal = parseFloat(row.principal?.replace(/,/g, '')) || 0;
+          const interest = parseFloat(row.interest?.replace(/,/g, '')) || 0;
+          const period = parseInt(row.period) || 1;
+          const date = row.date;
+
+          if (type === 'drawdown' && date && amount > 0) {
             importedDrawdowns.push({
               id: Math.random().toString(36).substr(2, 9),
-              date: row.date,
-              amount: Number(row.amount) || 0
+              date,
+              amount
             });
-          } else if (type === 'payment') {
+          } else if (type === 'payment' && (principal > 0 || interest > 0)) {
             importedPayments.push({
               id: Math.random().toString(36).substr(2, 9),
-              periodNumber: Number(row.period) || 1,
-              principalAmount: Number(row.principal) || 0,
-              interestAmount: Number(row.interest) || 0
+              periodNumber: period,
+              principalAmount: principal,
+              interestAmount: interest
             });
           }
         });
+
+        if (importedDrawdowns.length === 0 && importedPayments.length === 0) {
+          toast({ variant: "destructive", title: "Import Failed", description: "No valid drawdown or payment records found in CSV." });
+          return;
+        }
 
         setLoanInput(prev => ({
           ...prev,
@@ -160,9 +166,19 @@ export default function LoanEngineDashboard() {
         logAudit('Bulk Import', `Imported ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments from CSV.`);
       },
       error: (err) => {
-        toast({ variant: "destructive", title: "Import Failed", description: err.message });
+        toast({ variant: "destructive", title: "Import Error", description: err.message });
       }
     });
+    // Reset file input
+    e.target.value = '';
+  };
+
+  const handleDownloadTemplate = () => {
+    const headers = "type,date,amount,period,principal,interest\n";
+    const example1 = "drawdown,2026-01-23,50000000,,\n";
+    const example2 = "payment,, ,1,10000,5000\n";
+    downloadCSV("loan_import_template.csv", headers + example1 + example2);
+    toast({ title: "Template Downloaded", description: "Follow the column format to import historical data." });
   };
 
   const availableYears = useMemo(() => {
@@ -180,7 +196,7 @@ export default function LoanEngineDashboard() {
   const totalInterestAccrued = schedule.reduce((acc, curr) => acc + curr.interestAccrual, 0);
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-50">
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-50 font-body">
       <header className="sticky top-0 z-50 w-full border-b border-white/10 bg-slate-950/95 backdrop-blur">
         <div className="container flex h-16 items-center justify-between mx-auto px-4">
           <div className="flex items-center gap-3">
@@ -273,7 +289,12 @@ export default function LoanEngineDashboard() {
 
           <TabsContent value="drawdowns" className="space-y-4">
             <Card className="bg-slate-900/50 border-white/5">
-              <CardHeader><CardTitle>Incremental Exposure</CardTitle></CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Incremental Exposure</CardTitle>
+                <Button variant="ghost" size="sm" onClick={handleClearDrawdowns} className="text-destructive hover:bg-destructive/10">
+                  <Eraser className="h-4 w-4 mr-2" /> Clear All
+                </Button>
+              </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex flex-col md:flex-row gap-4 items-end bg-slate-800/30 p-6 rounded-xl border border-white/5">
                   <div className="space-y-2 flex-1 w-full"><Label>Value Date</Label><Input type="date" className="bg-slate-900" value={newDrawdown.date} onChange={e => setNewDrawdown({...newDrawdown, date: e.target.value})} /></div>
@@ -294,6 +315,9 @@ export default function LoanEngineDashboard() {
                         </TableCell>
                       </TableRow>
                     ))}
+                    {(!loanInput.drawdowns || loanInput.drawdowns.length === 0) && (
+                      <TableRow><TableCell colSpan={3} className="text-center py-8 text-muted-foreground italic">No incremental drawdowns recorded.</TableCell></TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -302,7 +326,12 @@ export default function LoanEngineDashboard() {
 
           <TabsContent value="payments" className="space-y-4">
             <Card className="bg-slate-900/50 border-white/5">
-              <CardHeader><CardTitle>Settlement Records</CardTitle></CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Settlement Records</CardTitle>
+                <Button variant="ghost" size="sm" onClick={handleClearPayments} className="text-destructive hover:bg-destructive/10">
+                  <Eraser className="h-4 w-4 mr-2" /> Clear All
+                </Button>
+              </CardHeader>
               <CardContent className="space-y-6">
                  <div className="flex flex-col md:flex-row gap-4 items-end bg-slate-800/30 p-6 rounded-xl border border-white/5">
                   <div className="space-y-2 w-24"><Label>Period #</Label><Input type="number" className="bg-slate-900" value={newPayment.periodNumber} onChange={e => setNewPayment({...newPayment, periodNumber: Number(e.target.value)})} /></div>
@@ -325,6 +354,9 @@ export default function LoanEngineDashboard() {
                         </TableCell>
                       </TableRow>
                     ))}
+                    {(!loanInput.manualPayments || loanInput.manualPayments.length === 0) && (
+                      <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground italic">No manual settlement records found.</TableCell></TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -374,7 +406,19 @@ export default function LoanEngineDashboard() {
                             <Badge 
                               className="cursor-pointer hover:scale-110 transition-transform text-[9px] uppercase tracking-wider px-2"
                               variant={row.status === 'paid' ? 'default' : row.status === 'unpaid' ? 'destructive' : row.status === 'recalculated' ? 'secondary' : 'outline'}
-                              onClick={() => togglePeriodStatus(row.periodNumber)}
+                              onClick={() => {
+                                const nextStatus: Record<LoanStatus, LoanStatus> = {
+                                  'projected': 'paid',
+                                  'paid': 'unpaid',
+                                  'unpaid': 'projected',
+                                  'recalculated': 'projected'
+                                };
+                                const newStatus = nextStatus[row.status] || 'projected';
+                                setLoanInput(prev => ({
+                                  ...prev,
+                                  periodStatuses: { ...(prev.periodStatuses || {}), [row.periodNumber]: newStatus }
+                                }));
+                              }}
                             >
                               {row.status}
                             </Badge>
@@ -417,20 +461,25 @@ export default function LoanEngineDashboard() {
               <DialogTitle>Bulk Accrual Import</DialogTitle>
               <DialogDescription>Upload CSV to populate drawdowns and settlements across multiple fiscal years.</DialogDescription>
             </DialogHeader>
-            <div 
-              className="py-8 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center space-y-4 hover:bg-white/5 transition-colors cursor-pointer"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="h-10 w-10 text-primary" />
-              <p className="text-sm font-medium">Click to select CSV file</p>
-              <p className="text-[10px] text-muted-foreground">Columns: type, date, amount, period, principal, interest</p>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept=".csv" 
-                onChange={handleFileUpload} 
-              />
+            <div className="space-y-4 pt-4">
+              <div 
+                className="py-8 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center space-y-4 hover:bg-white/5 transition-colors cursor-pointer"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-10 w-10 text-primary" />
+                <p className="text-sm font-medium">Click to select CSV file</p>
+                <p className="text-[10px] text-muted-foreground">Headers: type, date, amount, period, principal, interest</p>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  accept=".csv" 
+                  onChange={handleFileUpload} 
+                />
+              </div>
+              <Button variant="outline" className="w-full border-white/5" onClick={handleDownloadTemplate}>
+                <FileText className="h-4 w-4 mr-2" /> Download CSV Template
+              </Button>
             </div>
             <div className="flex justify-end gap-3 mt-4">
               <Button variant="ghost" onClick={() => setIsImportOpen(false)}>Cancel</Button>
