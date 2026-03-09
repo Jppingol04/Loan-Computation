@@ -7,6 +7,8 @@ import { signInAnonymously, signOut } from 'firebase/auth';
 import { v4 as uuidv4 } from 'uuid';
 import { useAuth, useCollection, useDoc, useFirebase, useUser, useFirestore, useMemoFirebase } from '@/firebase';
 import { SidebarProvider, Sidebar, SidebarInset, SidebarHeader, SidebarContent, SidebarTrigger, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarMenuAction } from '@/components/ui/sidebar';
+import { AreaChart, BarChart, Area, Bar, XAxis, YAxis, CartesianGrid } from "recharts"
+import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend } from "@/components/ui/chart";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet, FileText, Eraser, PlayCircle, Lightbulb, AlertTriangle, LogIn, LogOut, FilePlus, Save, Landmark } from 'lucide-react';
+import { Calculator, Table as TableIcon, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, FileSpreadsheet, FileText, Lightbulb, AlertTriangle, LogIn, LogOut, FilePlus, Save, Landmark, LayoutDashboard } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import Papa from 'papaparse';
 import { 
@@ -55,6 +57,116 @@ const BLANK_LOAN: LoanInput = {
   rateChanges: [],
   periodStatuses: {}
 };
+
+const DashboardTab = ({ schedule, currency }: { schedule: AmortizationPeriod[], currency: string }) => {
+  const chartData = useMemo(() => schedule.map(p => ({
+    name: `P${p.periodNumber}`,
+    "Closing Balance": p.closingBalance,
+    "Cumulative Interest": p.cumulativeInterest,
+    "Interest Paid": p.interestPaid,
+    "Principal Paid": p.principalPaid,
+  })), [schedule]);
+
+  const balanceChartConfig = {
+    "Closing Balance": { label: "Closing Balance", color: "hsl(var(--primary))" },
+    "Cumulative Interest": { label: "Cumulative Interest", color: "hsl(var(--destructive))" },
+  };
+  
+  const paymentChartConfig = {
+    "Principal Paid": { label: "Principal", color: "hsl(var(--primary))" },
+    "Interest Paid": { label: "Interest", color: "hsl(var(--destructive))" },
+  };
+
+  if (schedule.length === 0) {
+    return (
+      <Card className="bg-slate-900/50 border-white/5 flex items-center justify-center h-96">
+        <div className="text-center">
+          <LayoutDashboard className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-4 text-lg font-semibold">No Data to Display</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Generate a schedule to see the dashboard.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <Card className="bg-slate-900/50 border-white/5">
+        <CardHeader>
+          <CardTitle>Balance vs. Accrued Interest</CardTitle>
+          <CardDescription>
+            Shows the loan's closing balance and total accrued interest over time.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer config={balanceChartConfig} className="h-[300px] w-full">
+            <AreaChart data={chartData} margin={{ left: 0, right: 10, top: 10, bottom: 0 }}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border) / 0.5)" />
+              <XAxis dataKey="name" tickLine={false} axisLine={false} tickMargin={8} />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(value) => (value / 1000).toFixed(0) + 'k'}
+              />
+              <ChartTooltip
+                cursor={false}
+                content={<ChartTooltipContent indicator="dot" />}
+              />
+              <ChartLegend content={<ChartLegend />} />
+              <Area
+                dataKey="Closing Balance"
+                type="natural"
+                fill="hsl(var(--primary) / 0.1)"
+                stroke="hsl(var(--primary))"
+                stackId="a"
+              />
+              <Area
+                dataKey="Cumulative Interest"
+                type="natural"
+                fill="hsl(var(--destructive) / 0.1)"
+                stroke="hsl(var(--destructive))"
+                stackId="b"
+              />
+            </AreaChart>
+          </ChartContainer>
+        </CardContent>
+      </Card>
+      <Card className="bg-slate-900/50 border-white/5">
+        <CardHeader>
+          <CardTitle>Manual Payment Breakdown</CardTitle>
+          <CardDescription>
+            Shows the principal vs. interest portion of manual payments made.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer config={paymentChartConfig} className="h-[300px] w-full">
+            <BarChart data={chartData} margin={{ left: 0, right: 10, top: 10, bottom: 0 }}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border) / 0.5)" />
+              <XAxis dataKey="name" tickLine={false} axisLine={false} tickMargin={8} />
+               <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(value) => (value / 1000).toFixed(0) + 'k'}
+              />
+              <ChartTooltip
+                cursor={false}
+                content={<ChartTooltipContent indicator="dot" />}
+              />
+              <ChartLegend content={<ChartLegend />} />
+              <Bar dataKey="Principal Paid" stackId="a" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Interest Paid" stackId="a" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ChartContainer>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
 
 export default function LoanEngineDashboard() {
   const { toast } = useToast();
@@ -114,7 +226,7 @@ export default function LoanEngineDashboard() {
   const [editingField, setEditingField] = useState({ field: '', value: '' });
   const [schedule, setSchedule] = useState<AmortizationPeriod[]>([]);
   const [auditTrail, setAuditTrail] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState('setup');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [isComputing, setIsComputing] = useState(false);
   
   const [yearFilter, setYearFilter] = useState<string>('all');
@@ -510,16 +622,21 @@ export default function LoanEngineDashboard() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="flex w-fit bg-slate-900 border border-white/5 p-1 mb-8 rounded-xl overflow-x-auto">
-            <TabsTrigger value="setup" className="data-[state=active]:bg-primary rounded-lg">Setup</TabsTrigger>
-            <TabsTrigger value="drawdowns" className="data-[state=active]:bg-primary rounded-lg">Drawdowns</TabsTrigger>
-            <TabsTrigger value="payments" className="data-[state=active]:bg-primary rounded-lg">Payments</TabsTrigger>
-            <TabsTrigger value="rateChanges" className="data-[state=active]:bg-primary rounded-lg">Rate Changes</TabsTrigger>
-            <TabsTrigger value="schedule" className="data-[state=active]:bg-primary rounded-lg">Ledger (EOM)</TabsTrigger>
-            <TabsTrigger value="audit" className="data-[state=active]:bg-primary rounded-lg">Audit</TabsTrigger>
+            <TabsTrigger value="dashboard" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2"><LayoutDashboard />Dashboard</TabsTrigger>
+            <TabsTrigger value="setup" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2"><Settings2 />Setup</TabsTrigger>
+            <TabsTrigger value="drawdowns" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2"><TrendingUp />Drawdowns</TabsTrigger>
+            <TabsTrigger value="payments" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2"><Wallet />Payments</TabsTrigger>
+            <TabsTrigger value="rateChanges" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2"><History />Rate Changes</TabsTrigger>
+            <TabsTrigger value="schedule" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2"><TableIcon />Ledger (EOM)</TabsTrigger>
+            <TabsTrigger value="audit" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2"><FileText />Audit</TabsTrigger>
             <TabsTrigger value="ai" className="data-[state=active]:bg-primary rounded-lg flex items-center gap-2">
               <Sparkles className="h-4 w-4" /> AI Insights
             </TabsTrigger>
           </TabsList>
+            
+          <TabsContent value="dashboard">
+            <DashboardTab schedule={schedule} currency={loanInput.currency} />
+          </TabsContent>
             
           <TabsContent value="setup" className="space-y-6">
             <div className="grid md:grid-cols-3 gap-8">
@@ -650,5 +767,3 @@ export default function LoanEngineDashboard() {
     </SidebarProvider>
   );
 }
-
-    
