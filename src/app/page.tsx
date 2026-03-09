@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
-import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet, FileText, Eraser } from 'lucide-react';
+import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet, FileText, Eraser, PlayCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import Papa from 'papaparse';
 import { 
@@ -53,16 +53,37 @@ export default function LoanEngineDashboard() {
   const [schedule, setSchedule] = useState<AmortizationPeriod[]>([]);
   const [auditTrail, setAuditTrail] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('setup');
+  const [isComputing, setIsComputing] = useState(false);
   
   const [yearFilter, setYearFilter] = useState<string>('all');
   const [newDrawdown, setNewDrawdown] = useState({ date: '', amount: 0 });
   const [newPayment, setNewPayment] = useState({ periodNumber: 1, principal: 0, interest: 0 });
   const [isImportOpen, setIsImportOpen] = useState(false);
 
+  // Core calculation logic
+  const performCalculation = (input: LoanInput) => {
+    setIsComputing(true);
+    try {
+      const newSchedule = generateAmortizationSchedule(input);
+      setSchedule(newSchedule);
+      logAudit('Schedule Recomputed', `Recalculated accruals for ${input.loanName} across ${input.termInMonths} periods.`);
+    } finally {
+      setIsComputing(false);
+    }
+  };
+
+  // Automatically compute on input changes
   useEffect(() => {
-    const newSchedule = generateAmortizationSchedule(loanInput);
-    setSchedule(newSchedule);
+    performCalculation(loanInput);
   }, [loanInput]);
+
+  const handleManualCompute = () => {
+    performCalculation(loanInput);
+    toast({
+      title: "Engine Recomputed",
+      description: "Accrued interest and balances have been refreshed based on current inputs.",
+    });
+  };
 
   const logAudit = (action: string, details: string) => {
     const entry = {
@@ -128,10 +149,10 @@ export default function LoanEngineDashboard() {
 
         data.forEach(row => {
           const type = row.type?.toLowerCase();
-          const amount = parseFloat(row.amount?.replace(/,/g, '')) || 0;
-          const principal = parseFloat(row.principal?.replace(/,/g, '')) || 0;
-          const interest = parseFloat(row.interest?.replace(/,/g, '')) || 0;
-          const period = parseInt(row.period) || 1;
+          const amount = parseFloat(String(row.amount || '0').replace(/,/g, '')) || 0;
+          const principal = parseFloat(String(row.principal || '0').replace(/,/g, '')) || 0;
+          const interest = parseFloat(String(row.interest || '0').replace(/,/g, '')) || 0;
+          const period = parseInt(String(row.period || '1')) || 1;
           const date = row.date;
 
           if (type === 'drawdown' && date && amount > 0) {
@@ -155,14 +176,18 @@ export default function LoanEngineDashboard() {
           return;
         }
 
-        setLoanInput(prev => ({
-          ...prev,
-          drawdowns: [...(prev.drawdowns || []), ...importedDrawdowns],
-          manualPayments: [...(prev.manualPayments || []), ...importedPayments]
-        }));
+        // Functional update to ensure we use the latest state and trigger the re-calculation
+        setLoanInput(prev => {
+          const updated = {
+            ...prev,
+            drawdowns: [...(prev.drawdowns || []), ...importedDrawdowns],
+            manualPayments: [...(prev.manualPayments || []), ...importedPayments]
+          };
+          return updated;
+        });
         
         setIsImportOpen(false);
-        toast({ title: "Import Successful", description: `Loaded ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments.` });
+        toast({ title: "Import Successful", description: `Loaded ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments. Ledger will recompute.` });
         logAudit('Bulk Import', `Imported ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments from CSV.`);
       },
       error: (err) => {
@@ -371,6 +396,16 @@ export default function LoanEngineDashboard() {
                   <CardDescription>Calendar month-end accruals based on selected day-count basis.</CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    onClick={handleManualCompute}
+                    disabled={isComputing}
+                    className="bg-blue-600 hover:bg-blue-700 text-white border-none shadow-md"
+                  >
+                    <PlayCircle className={`h-4 w-4 mr-2 ${isComputing ? 'animate-spin' : ''}`} /> 
+                    Compute Accruals
+                  </Button>
                   <Select value={yearFilter} onValueChange={setYearFilter}><SelectTrigger className="w-[120px] bg-slate-800 border-white/10"><SelectValue placeholder="Year" /></SelectTrigger><SelectContent><SelectItem value="all">All Years</SelectItem>{availableYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}</SelectContent></Select>
                   <Button variant="outline" size="sm" onClick={() => downloadCSV(`${loanInput.loanName}.csv`, generateAmortizationCSV(schedule))} className="border-white/10"><Download className="h-4 w-4 mr-2" /> Export CSV</Button>
                 </div>
