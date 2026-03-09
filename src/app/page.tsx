@@ -199,6 +199,31 @@ export default function LoanEngineDashboard() {
 
   const rateChangesQuery = useMemoFirebase(() => selectedLoanId ? collection(firestore, 'loans', selectedLoanId, 'interestRateChanges') : null, [selectedLoanId]);
   const { data: rateChangesData } = useCollection<InterestRateChange>(rateChangesQuery);
+  
+  const [schedule, setSchedule] = useState<AmortizationPeriod[]>([]);
+  const [auditTrail, setAuditTrail] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [isComputing, setIsComputing] = useState(false);
+  
+  const [yearFilter, setYearFilter] = useState<string>('all');
+  const [newDrawdown, setNewDrawdown] = useState({ date: '', amount: 0 });
+  const [newPayment, setNewPayment] = useState({ periodNumber: 1, principal: 0, interest: 0 });
+  const [newRateChange, setNewRateChange] = useState({ effectiveFromPeriod: 1, newAnnualRate: 5.0, reasonForChange: '' });
+  const [isImportOpen, setIsImportOpen] = useState(false);
+
+  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisOutput | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const logAudit = useCallback((action: string, details: string) => {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      actionType: action,
+      details,
+      user: user?.isAnonymous ? 'Anonymous User' : (user?.email || 'Internal Auditor')
+    };
+    setAuditTrail(prev => [entry, ...prev]);
+  }, [user]);
 
   useEffect(() => {
     if (loanData && selectedLoanId) {
@@ -220,24 +245,7 @@ export default function LoanEngineDashboard() {
     } else if (!selectedLoanId) {
       setLoanInput(BLANK_LOAN);
     }
-  }, [selectedLoanId, loanData, drawdownsData, paymentsData, rateChangesData]);
-
-
-  const [editingField, setEditingField] = useState({ field: '', value: '' });
-  const [schedule, setSchedule] = useState<AmortizationPeriod[]>([]);
-  const [auditTrail, setAuditTrail] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [isComputing, setIsComputing] = useState(false);
-  
-  const [yearFilter, setYearFilter] = useState<string>('all');
-  const [newDrawdown, setNewDrawdown] = useState({ date: '', amount: 0 });
-  const [newPayment, setNewPayment] = useState({ periodNumber: 1, principal: 0, interest: 0 });
-  const [newRateChange, setNewRateChange] = useState({ effectiveFromPeriod: 1, newAnnualRate: 5.0, reasonForChange: '' });
-  const [isImportOpen, setIsImportOpen] = useState(false);
-
-  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisOutput | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  }, [selectedLoanId, loanData, drawdownsData, paymentsData, rateChangesData, logAudit]);
 
   const performCalculation = useCallback((input: LoanInput) => {
     setIsComputing(true);
@@ -252,49 +260,29 @@ export default function LoanEngineDashboard() {
     } finally {
       setIsComputing(false);
     }
-  }, [toast]);
+  }, [toast, logAudit]);
 
   useEffect(() => {
     performCalculation(loanInput);
   }, [loanInput, performCalculation]);
 
-  const logAudit = (action: string, details: string) => {
-    const entry = {
-      timestamp: new Date().toISOString(),
-      actionType: action,
-      details,
-      user: user?.isAnonymous ? 'Anonymous User' : (user?.email || 'Internal Auditor')
-    };
-    setAuditTrail(prev => [entry, ...prev]);
-  };
-
-  const handleParamChange = (field: keyof LoanInput, value: any, oldValue: any) => {
-     if (value !== oldValue) {
-      logAudit(
-        'Parameter Change',
-        `"${field}" changed from "${oldValue}" to "${value}".`
-      );
-    }
-    setLoanInput(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleAddDrawdown = () => {
+  const handleAddDrawdown = useCallback(() => {
     if (!newDrawdown.date || newDrawdown.amount <= 0) {
       toast({ variant: "destructive", title: "Invalid Drawdown", description: "Please provide a valid date and amount." });
       return;
     }
     const updatedDrawdowns = [...(loanInput.drawdowns || []), { id: uuidv4(), ...newDrawdown }];
-    setLoanInput({ ...loanInput, drawdowns: updatedDrawdowns });
+    setLoanInput(prev => ({ ...prev, drawdowns: updatedDrawdowns }));
     setNewDrawdown({ date: '', amount: 0 });
     logAudit('Drawdown Added', `New drawdown of ${newDrawdown.amount} on ${newDrawdown.date}.`);
-  };
+  }, [newDrawdown, loanInput.drawdowns, logAudit, toast]);
 
-  const handleClearDrawdowns = () => {
+  const handleClearDrawdowns = useCallback(() => {
     setLoanInput(prev => ({ ...prev, drawdowns: [] }));
     logAudit('Drawdowns Cleared', 'All drawdown records were removed.');
-  };
+  }, [logAudit]);
   
-  const handleAddRateChange = () => {
+  const handleAddRateChange = useCallback(() => {
     if (newRateChange.effectiveFromPeriod < 1 || newRateChange.newAnnualRate <= 0) {
       toast({ variant: "destructive", title: "Invalid Rate Change", description: "Provide a valid period and rate." });
       return;
@@ -307,9 +295,9 @@ export default function LoanEngineDashboard() {
     setLoanInput(prev => ({ ...prev, rateChanges: updatedRateChanges }));
     setNewRateChange({ effectiveFromPeriod: (loanInput.rateChanges.length + 2), newAnnualRate: newRateChange.newAnnualRate, reasonForChange: '' });
     logAudit('Rate Change Added', `Rate changes to ${change.newAnnualRate}% from period ${change.effectiveFromPeriod}.`);
-  };
+  }, [newRateChange, loanInput.rateChanges, toast, logAudit]);
 
-  const handleAddPayment = () => {
+  const handleAddPayment = useCallback(() => {
     if (newPayment.periodNumber < 1 || (newPayment.principal <= 0 && newPayment.interest <= 0)) {
       toast({ variant: "destructive", title: "Invalid Payment", description: "Provide a valid period and payment amount." });
       return;
@@ -323,22 +311,22 @@ export default function LoanEngineDashboard() {
     setLoanInput(prev => ({ ...prev, manualPayments: [...(prev.manualPayments || []), payment] }));
     setNewPayment({ periodNumber: 1, principal: 0, interest: 0 });
     logAudit('Payment Recorded', `Payment for Month ${newPayment.periodNumber} recorded.`);
-  };
+  }, [newPayment, loanInput.manualPayments, toast, logAudit]);
 
-  const handleClearPayments = () => {
+  const handleClearPayments = useCallback(() => {
     setLoanInput(prev => ({ ...prev, manualPayments: [] }));
     logAudit('Payments Cleared', 'All manual settlement records were removed.');
-  };
+  }, [logAudit]);
 
-  const handleNewLoan = () => {
+  const handleNewLoan = useCallback(() => {
     setSelectedLoanId(null);
     setLoanInput(BLANK_LOAN);
     setAuditTrail([]);
     logAudit("New Loan Created", "Initialized a blank loan facility.");
     toast({ title: "New Loan", description: "New blank loan facility ready for setup." });
-  };
+  }, [logAudit, toast]);
   
-  const handleSaveLoan = async () => {
+  const handleSaveLoan = useCallback(async () => {
     if (!user) {
       toast({ variant: 'destructive', title: 'Not Signed In', description: 'You must sign in to save loans.' });
       return;
@@ -406,9 +394,9 @@ export default function LoanEngineDashboard() {
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [user, firestore, loanInput, selectedLoanId, toast, logAudit]);
 
-  const handleDeleteLoan = async (loanId: string) => {
+  const handleDeleteLoan = useCallback(async (loanId: string) => {
     if (!window.confirm("Are you sure you want to permanently delete this loan?")) return;
 
     try {
@@ -429,10 +417,9 @@ export default function LoanEngineDashboard() {
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'Delete Failed', description: e.message });
     }
-  };
+  }, [firestore, toast, handleNewLoan, selectedLoanId]);
 
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -481,14 +468,14 @@ export default function LoanEngineDashboard() {
       }
     });
     if (e.target) e.target.value = '';
-  };
+  }, [toast, logAudit]);
   
-  const handleExportExcel = () => {
+  const handleExportExcel = useCallback(() => {
     logAudit('Excel Export', `Workbook exported for "${loanInput.loanName}".`);
     exportToExcel(schedule, loanInput, auditTrail);
-  };
+  }, [logAudit, schedule, loanInput, auditTrail]);
   
-  const handleAiAnalysis = async () => {
+  const handleAiAnalysis = useCallback(async () => {
     if (schedule.length === 0) {
       toast({ variant: "destructive", title: "Cannot Analyze", description: "A schedule must be generated first." });
       return;
@@ -535,7 +522,7 @@ export default function LoanEngineDashboard() {
     } finally {
       setIsAnalyzing(false);
     }
-  };
+  }, [schedule, loanInput, auditTrail, toast, logAudit]);
 
   const availableYears = useMemo(() => {
     const years = new Set<string>();
@@ -1026,5 +1013,3 @@ export default function LoanEngineDashboard() {
     </SidebarProvider>
   );
 }
-
-    
