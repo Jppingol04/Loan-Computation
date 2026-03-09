@@ -64,6 +64,11 @@ const AiAnalysisOutputSchema = z.object({
 export type AiAnalysisOutput = z.infer<typeof AiAnalysisOutputSchema>;
 
 export async function aiPoweredLoanInsights(input: AiAnalysisInput): Promise<AiAnalysisOutput> {
+  if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+    throw new Error(
+      'The AI feature is not configured. Please create a .env.local file in the project root and add your Gemini API key, e.g., GEMINI_API_KEY=your_api_key_here. You can obtain a key from Google AI Studio.'
+    );
+  }
   return aiPoweredLoanInsightsFlow(input);
 }
 
