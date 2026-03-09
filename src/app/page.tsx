@@ -34,17 +34,15 @@ export default function LoanEngineDashboard() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [loanInput, setLoanInput] = useState<LoanInput>({
-    loanName: 'Corporate Multi-Drawdown Facility',
-    principalAmount: 100000000,
+    loanName: 'New Loan Facility',
+    principalAmount: 0,
     annualInterestRate: 5.8,
     termInMonths: 24,
     startDate: '2026-01-01',
     currency: 'USD',
     dayCountConvention: 'ACT/365',
     isBullet: true,
-    drawdowns: [
-      { id: '1', date: '2026-01-23', amount: 50000000 }
-    ],
+    drawdowns: [],
     manualPayments: [],
     periodStatuses: {}
   });
