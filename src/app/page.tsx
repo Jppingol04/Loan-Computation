@@ -1,4 +1,3 @@
-
 "use client"
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
@@ -60,6 +59,46 @@ export default function LoanEngineDashboard() {
   const [newPayment, setNewPayment] = useState({ periodNumber: 1, principal: 0, interest: 0 });
   const [isImportOpen, setIsImportOpen] = useState(false);
 
+  // Robust date normalization for imports
+  const normalizeDateString = (dateStr: string): string => {
+    if (!dateStr) return '';
+    const cleanStr = dateStr.trim();
+    
+    // Attempt parsing various common formats (YYYY-MM-DD, DD/MM/YYYY, etc)
+    const parts = cleanStr.split(/[-/.]/);
+    if (parts.length === 3) {
+      let y, m, d;
+      if (parts[0].length === 4) {
+        // YYYY-MM-DD
+        [y, m, d] = parts;
+      } else if (parts[2].length === 4) {
+        // DD/MM/YYYY or MM/DD/YYYY
+        // We assume DD/MM/YYYY for international consistency unless it's obviously MM/DD
+        const first = parseInt(parts[0]);
+        const second = parseInt(parts[1]);
+        if (first > 12) {
+          [d, m, y] = parts;
+        } else {
+          // Default to DD/MM/YYYY
+          [d, m, y] = parts;
+        }
+      }
+      if (y && m && d) {
+        return `${y}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
+      }
+    }
+
+    // Fallback to standard JS parsing (can be inconsistent but better than nothing)
+    try {
+      const dt = new Date(cleanStr);
+      if (!isNaN(dt.getTime())) {
+        return dt.toISOString().split('T')[0];
+      }
+    } catch (e) {}
+    
+    return cleanStr; // Return as is if all else fails
+  };
+
   // Core calculation logic
   const performCalculation = (input: LoanInput) => {
     setIsComputing(true);
@@ -67,6 +106,8 @@ export default function LoanEngineDashboard() {
       const newSchedule = generateAmortizationSchedule(input);
       setSchedule(newSchedule);
       logAudit('Schedule Recomputed', `Recalculated accruals for ${input.loanName} across ${input.termInMonths} periods.`);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Calculation Error", description: err.message });
     } finally {
       setIsComputing(false);
     }
@@ -153,12 +194,13 @@ export default function LoanEngineDashboard() {
           const principal = parseFloat(String(row.principal || '0').replace(/,/g, '')) || 0;
           const interest = parseFloat(String(row.interest || '0').replace(/,/g, '')) || 0;
           const period = parseInt(String(row.period || '1')) || 1;
-          const date = row.date;
+          const rawDate = String(row.date || '');
+          const normalizedDate = normalizeDateString(rawDate);
 
-          if (type === 'drawdown' && date && amount > 0) {
+          if (type === 'drawdown' && normalizedDate && amount > 0) {
             importedDrawdowns.push({
               id: Math.random().toString(36).substr(2, 9),
-              date,
+              date: normalizedDate,
               amount
             });
           } else if (type === 'payment' && (principal > 0 || interest > 0)) {

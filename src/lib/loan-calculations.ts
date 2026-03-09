@@ -1,4 +1,3 @@
-
 export type LoanStatus = 'projected' | 'paid' | 'unpaid' | 'recalculated';
 
 export type DayCountConvention = '30/360' | '30/365' | 'ACT/360' | 'ACT/365';
@@ -46,10 +45,29 @@ export interface LoanInput {
   periodStatuses?: Record<number, LoanStatus>;
 }
 
+// Improved date parsing to handle various common formats
 function parseLocalDate(dateStr: string): Date {
   if (!dateStr) return new Date();
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return new Date(year, month - 1, day);
+  
+  // Try YYYY-MM-DD
+  const parts = dateStr.split(/[-/.]/);
+  if (parts.length === 3) {
+    let y, m, d;
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD
+      [y, m, d] = parts.map(Number);
+    } else if (parts[2].length === 4) {
+      // DD/MM/YYYY
+      [d, m, y] = parts.map(Number);
+    } else {
+      // Fallback to standard
+      return new Date(dateStr);
+    }
+    return new Date(y, m - 1, d);
+  }
+  
+  const dt = new Date(dateStr);
+  return isNaN(dt.getTime()) ? new Date() : dt;
 }
 
 function toDateString(date: Date): string {
@@ -100,6 +118,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   const start = parseLocalDate(startDate);
   const rate = annualInterestRate / 100;
 
+  // Initial balance includes drawdowns on or before the start date
   const initialDrawdownAmount = drawdowns
     .filter(d => parseLocalDate(d.date) <= start)
     .reduce((acc, d) => acc + d.amount, 0);
@@ -124,6 +143,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     // 2. Accrue interest for intra-month drawdowns (prospective from drawdown date)
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = parseLocalDate(d.date);
+      // Only drawdowns occurring WITHIN this period
       return dDate > prevPeriodEnd && dDate <= targetDate;
     });
 
