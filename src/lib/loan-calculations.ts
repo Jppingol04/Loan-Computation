@@ -145,11 +145,9 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   let currentAnnualRate = annualInterestRate;
 
   for (let i = 1; i <= Math.max(1, totalMonths); i++) {
-    // Determine current rate for the period
-    for (const rc of sortedRateChanges) {
-      if (i >= rc.effectiveFromPeriod) {
-        currentAnnualRate = rc.newAnnualRate;
-      }
+    const applicableRateChange = sortedRateChanges.find(rc => rc.effectiveFromPeriod === i);
+    if (applicableRateChange) {
+      currentAnnualRate = applicableRateChange.newAnnualRate;
     }
     const rate = currentAnnualRate / 100;
     

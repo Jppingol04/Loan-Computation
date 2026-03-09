@@ -703,7 +703,13 @@ export default function LoanEngineDashboard() {
                       <div className="space-y-2"><Label>Currency</Label>
                         <Select value={loanInput.currency} onValueChange={(v: string) => setLoanInput(p => ({...p, currency: v}))}>
                           <SelectTrigger className="bg-slate-800 border-white/10"><SelectValue /></SelectTrigger>
-                          <SelectContent><SelectItem value="USD">USD</SelectItem><SelectItem value="AED">AED</SelectItem><SelectItem value="EUR">EUR</SelectItem></SelectContent>
+                          <SelectContent>
+                            <SelectItem value="USD">USD</SelectItem>
+                            <SelectItem value="AED">AED</SelectItem>
+                            <SelectItem value="EUR">EUR</SelectItem>
+                            <SelectItem value="GBP">GBP</SelectItem>
+                            <SelectItem value="PHP">PHP</SelectItem>
+                          </SelectContent>
                         </Select>
                       </div>
                     </div>
@@ -1020,3 +1026,5 @@ export default function LoanEngineDashboard() {
     </SidebarProvider>
   );
 }
+
+    
