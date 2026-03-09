@@ -28,8 +28,8 @@ export interface AmortizationPeriod {
   closingBalance: number;
   cumulativeInterest: number;
   status: LoanStatus;
-  totalPayment: number; // Added for annuity calculations
-  principalPortion: number; // Added for annuity calculations
+  totalPayment: number;
+  principalPortion: number;
 }
 
 export interface LoanInput {
@@ -40,25 +40,18 @@ export interface LoanInput {
   startDate: string;
   currency: string;
   dayCountConvention: DayCountConvention;
-  isBullet: boolean; // Whether to automatically repay remaining principal at maturity
+  isBullet: boolean;
   drawdowns?: Drawdown[];
   manualPayments?: ManualPayment[];
-  periodStatuses?: Record<number, LoanStatus>; // Map of periodNumber to override status
+  periodStatuses?: Record<number, LoanStatus>;
 }
 
-/**
- * Parses a YYYY-MM-DD string into a Date object at midnight local time.
- * Avoids UTC timezone shifts.
- */
 function parseLocalDate(dateStr: string): Date {
   if (!dateStr) return new Date();
   const [year, month, day] = dateStr.split('-').map(Number);
   return new Date(year, month - 1, day);
 }
 
-/**
- * Formats a Date object back to YYYY-MM-DD string.
- */
 function toDateString(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -66,11 +59,8 @@ function toDateString(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-/**
- * Calculates days between two dates based on convention.
- */
 function calculateDays(start: Date, end: Date, convention: DayCountConvention): number {
-  if (convention === '30/360') {
+  if (convention === '30/360' || convention === '30/365') {
     let d1 = start.getDate();
     let m1 = start.getMonth() + 1;
     let y1 = start.getFullYear();
@@ -84,23 +74,8 @@ function calculateDays(start: Date, end: Date, convention: DayCountConvention): 
     return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1);
   }
   
-  if (convention === '30/365') {
-    // Standard 30/365: months are 30 days, year is 365.
-    // However, some implementations treat it as actual days / 365 but limiting months.
-    // We'll follow the simple rule: (Months * 30) + DayDiff.
-    let m1 = start.getMonth() + 1;
-    let y1 = start.getFullYear();
-    let m2 = end.getMonth() + 1;
-    let y2 = end.getFullYear();
-    let d1 = Math.min(start.getDate(), 30);
-    let d2 = Math.min(end.getDate(), 30);
-    
-    return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1); 
-  }
-
-  // ACT conventions
-  const diffTime = Math.abs(end.getTime() - start.getTime());
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const diffTime = end.getTime() - start.getTime();
+  return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 }
 
 function getYearBasis(convention: DayCountConvention): number {
@@ -125,7 +100,6 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   const start = parseLocalDate(startDate);
   const rate = annualInterestRate / 100;
 
-  // Aggregate drawdowns at or before start
   const initialDrawdownAmount = drawdowns
     .filter(d => parseLocalDate(d.date) <= start)
     .reduce((acc, d) => acc + d.amount, 0);
@@ -134,39 +108,46 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   let cumulativeInterest = 0;
 
   for (let i = 1; i <= termInMonths; i++) {
-    // Period end date (EOM)
     const targetDate = new Date(start.getFullYear(), start.getMonth() + i, 0);
     const dateStr = toDateString(targetDate);
 
-    // Period window
     const prevPeriodEnd = i === 1 
       ? new Date(start) 
       : new Date(start.getFullYear(), start.getMonth() + i - 1, 0);
 
+    const yearBasis = getYearBasis(dayCountConvention);
+    
+    // 1. Accrue interest on Opening Balance for the whole period
+    const totalDaysInPeriod = calculateDays(prevPeriodEnd, targetDate, dayCountConvention);
+    let interestAccrual = currentBalance * rate * (totalDaysInPeriod / yearBasis);
+
+    // 2. Accrue interest for intra-month drawdowns (prospective from drawdown date)
     const periodDrawdowns = drawdowns.filter(d => {
       const dDate = parseLocalDate(d.date);
       return dDate > prevPeriodEnd && dDate <= targetDate;
     });
+
+    periodDrawdowns.forEach(d => {
+      const dDate = parseLocalDate(d.date);
+      const daysRemaining = calculateDays(dDate, targetDate, dayCountConvention);
+      interestAccrual += d.amount * rate * (daysRemaining / yearBasis);
+    });
+
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
-    
-    // Interest Calculation
-    const days = calculateDays(prevPeriodEnd, targetDate, dayCountConvention);
-    const yearBasis = getYearBasis(dayCountConvention);
-    const interestAccrual = Number((currentBalance * rate * (days / yearBasis)).toFixed(2));
     
     const manualPmtList = manualPayments.filter(p => p.periodNumber === i);
     let principalPaid = manualPmtList.reduce((acc, p) => acc + p.principalAmount, 0);
     let interestPaid = manualPmtList.reduce((acc, p) => acc + p.interestAmount, 0);
 
-    // Bullet Repayment Logic at Maturity
     if (i === termInMonths && isBullet) {
-      const totalOutstanding = currentBalance + interestAccrual - principalPaid - interestPaid;
+      const totalOutstanding = currentBalance + drawdownAmount + interestAccrual - principalPaid - interestPaid;
       if (totalOutstanding > 0) {
-        principalPaid = Number((currentBalance - principalPaid).toFixed(2));
+        principalPaid = Number((currentBalance + drawdownAmount - principalPaid).toFixed(2));
         interestPaid = Number((interestAccrual - interestPaid).toFixed(2));
       }
     }
 
+    interestAccrual = Number(interestAccrual.toFixed(2));
     const closingBalance = Number((currentBalance + drawdownAmount + interestAccrual - principalPaid - interestPaid).toFixed(2));
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
@@ -181,7 +162,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       principalPaid,
       interestPaid,
       principalPortion: principalPaid,
-      totalPayment: principalPaid + interestPaid,
+      totalPayment: Number((principalPaid + interestPaid).toFixed(2)),
       closingBalance: Math.max(0, closingBalance),
       cumulativeInterest,
       status,

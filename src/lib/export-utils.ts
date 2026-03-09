@@ -1,4 +1,6 @@
+
 import { AmortizationPeriod } from './loan-calculations';
+import * as XLSX from 'xlsx';
 
 export function downloadCSV(filename: string, content: string) {
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
@@ -14,40 +16,46 @@ export function downloadCSV(filename: string, content: string) {
   }
 }
 
+export function exportToExcel(schedule: AmortizationPeriod[], loanName: string) {
+  const data = schedule.map(p => ({
+    'Period': p.periodNumber,
+    'Date': p.date,
+    'Opening Balance': p.openingBalance,
+    'Drawdown': p.drawdownAmount,
+    'Interest Accrual': p.interestAccrual,
+    'Principal Paid': p.principalPaid,
+    'Interest Paid': p.interestPaid,
+    'Closing Balance': p.closingBalance,
+    'Cumulative Interest': p.cumulativeInterest,
+    'Status': p.status
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Amortization Schedule");
+  
+  // Basic styling - set column widths
+  const wscols = [
+    {wch: 8}, {wch: 12}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 18}, {wch: 12}
+  ];
+  worksheet['!cols'] = wscols;
+
+  XLSX.writeFile(workbook, `${loanName || 'Loan_Schedule'}.xlsx`);
+}
+
 export function generateAmortizationCSV(schedule: AmortizationPeriod[]): string {
-  const headers = ['Period', 'Date', 'Opening Balance', 'Interest Accrual', 'Principal Portion', 'Total Payment', 'Closing Balance', 'Cumulative Interest', 'Status'];
+  const headers = ['Period', 'Date', 'Opening Balance', 'Drawdown', 'Interest Accrual', 'Principal Paid', 'Interest Paid', 'Closing Balance', 'Cumulative Interest', 'Status'];
   const rows = schedule.map(p => [
     p.periodNumber,
     p.date,
     p.openingBalance,
+    p.drawdownAmount,
     p.interestAccrual,
-    p.principalPortion,
-    p.totalPayment,
+    p.principalPaid,
+    p.interestPaid,
     p.closingBalance,
     p.cumulativeInterest,
     p.status
   ]);
   return [headers, ...rows].map(r => r.join(',')).join('\n');
-}
-
-export function generateOdooJournalCSV(schedule: AmortizationPeriod[], loanName: string): string {
-  const headers = ['journal_id/name', 'date', 'ref', 'line_ids/account_id/code', 'line_ids/name', 'line_ids/debit', 'line_ids/credit'];
-  const lines: any[][] = [];
-
-  schedule.forEach(p => {
-    // Accrual Entry
-    const ref = `${loanName} - Period ${p.periodNumber}`;
-    lines.push(['Miscellaneous Operations', p.date, ref, '6110', 'Interest Expense Accrual', p.interestAccrual, 0]);
-    lines.push(['Miscellaneous Operations', p.date, ref, '2310', 'Interest Payable Accrual', 0, p.interestAccrual]);
-
-    // Payment Entry (Simplified for example)
-    if (p.status === 'paid') {
-      const pRef = `${loanName} - Payment ${p.periodNumber}`;
-      lines.push(['Bank', p.date, pRef, '2200', 'Loan Principal Repayment', p.principalPortion, 0]);
-      lines.push(['Bank', p.date, pRef, '2310', 'Interest Settlement', p.interestAccrual, 0]);
-      lines.push(['Bank', p.date, pRef, '1010', 'Bank Payment', 0, p.totalPayment]);
-    }
-  });
-
-  return [headers, ...lines].map(r => r.join(',')).join('\n');
 }

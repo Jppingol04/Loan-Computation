@@ -1,7 +1,7 @@
 
 "use client"
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight } from 'lucide-react';
+import { Calculator, Table as TableIcon, Download, RefreshCw, Sparkles, Plus, Trash2, TrendingUp, History, Settings2, Wallet, Upload, CreditCard, ChevronRight, FileSpreadsheet } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import Papa from 'papaparse';
 import { 
@@ -28,21 +27,25 @@ import {
 } from '@/lib/loan-calculations';
 import { 
   downloadCSV, 
-  generateAmortizationCSV 
+  generateAmortizationCSV,
+  exportToExcel
 } from '@/lib/export-utils';
 
 export default function LoanEngineDashboard() {
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [loanInput, setLoanInput] = useState<LoanInput>({
     loanName: 'Corporate Multi-Drawdown Facility',
     principalAmount: 100000000,
     annualInterestRate: 5.8,
     termInMonths: 24,
-    startDate: '2025-01-01',
+    startDate: '2026-01-01',
     currency: 'USD',
     dayCountConvention: 'ACT/365',
     isBullet: true,
-    drawdowns: [],
+    drawdowns: [
+      { id: '1', date: '2026-01-23', amount: 50000000 }
+    ],
     manualPayments: [],
     periodStatuses: {}
   });
@@ -69,12 +72,6 @@ export default function LoanEngineDashboard() {
       user: 'Internal Auditor'
     };
     setAuditTrail(prev => [entry, ...prev]);
-  };
-
-  const refreshSchedule = () => {
-    const newSchedule = generateAmortizationSchedule(loanInput);
-    setSchedule(newSchedule);
-    toast({ title: "Schedule Refreshed", description: "Ledger re-computed with selected convention." });
   };
 
   const handleAddDrawdown = () => {
@@ -122,6 +119,52 @@ export default function LoanEngineDashboard() {
     logAudit('Status Change', `Period ${periodNumber} status updated to ${nextStatus}.`);
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const data = results.data as any[];
+        const importedDrawdowns: Drawdown[] = [];
+        const importedPayments: ManualPayment[] = [];
+
+        data.forEach(row => {
+          const type = row.type?.toLowerCase();
+          if (type === 'drawdown') {
+            importedDrawdowns.push({
+              id: Math.random().toString(36).substr(2, 9),
+              date: row.date,
+              amount: Number(row.amount) || 0
+            });
+          } else if (type === 'payment') {
+            importedPayments.push({
+              id: Math.random().toString(36).substr(2, 9),
+              periodNumber: Number(row.period) || 1,
+              principalAmount: Number(row.principal) || 0,
+              interestAmount: Number(row.interest) || 0
+            });
+          }
+        });
+
+        setLoanInput(prev => ({
+          ...prev,
+          drawdowns: [...(prev.drawdowns || []), ...importedDrawdowns],
+          manualPayments: [...(prev.manualPayments || []), ...importedPayments]
+        }));
+        
+        setIsImportOpen(false);
+        toast({ title: "Import Successful", description: `Loaded ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments.` });
+        logAudit('Bulk Import', `Imported ${importedDrawdowns.length} drawdowns and ${importedPayments.length} payments from CSV.`);
+      },
+      error: (err) => {
+        toast({ variant: "destructive", title: "Import Failed", description: err.message });
+      }
+    });
+  };
+
   const availableYears = useMemo(() => {
     const years = new Set<string>();
     schedule.forEach(p => years.add(p.date.split('-')[0]));
@@ -151,7 +194,7 @@ export default function LoanEngineDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <Button variant="outline" size="sm" className="border-white/10" onClick={() => setIsImportOpen(true)}><Upload className="h-4 w-4 mr-2" /> Bulk Import</Button>
-            <Button size="sm" className="shadow-lg shadow-primary/25 bg-primary hover:bg-primary/90"><Download className="h-4 w-4 mr-2" /> Report Pack</Button>
+            <Button size="sm" onClick={() => exportToExcel(schedule, loanInput.loanName)} className="shadow-lg shadow-primary/25 bg-primary hover:bg-primary/90"><FileSpreadsheet className="h-4 w-4 mr-2" /> Export Excel</Button>
           </div>
         </div>
       </header>
@@ -215,12 +258,15 @@ export default function LoanEngineDashboard() {
                 </CardContent>
               </Card>
               <Card className="bg-slate-900 border-white/10 border-dashed border-2 flex flex-col items-center justify-center p-8 text-center space-y-4">
-                <div className="p-3 bg-primary/10 rounded-full text-primary"><Sparkles className="h-8 w-8" /></div>
+                <div className="p-3 bg-primary/10 rounded-full text-primary"><Calculator className="h-8 w-8" /></div>
                 <div>
-                  <h3 className="font-bold">Ready to Accrue?</h3>
-                  <p className="text-xs text-muted-foreground mt-1">Computation basis: {loanInput.dayCountConvention}</p>
+                  <h3 className="font-bold">Bullet Repayment</h3>
+                  <p className="text-xs text-muted-foreground mt-1">Settle full principal at maturity</p>
                 </div>
-                <Button className="w-full bg-primary" onClick={refreshSchedule}>Recalculate Model</Button>
+                <div className="flex items-center space-x-2">
+                   <Switch checked={loanInput.isBullet} onCheckedChange={(v) => setLoanInput({...loanInput, isBullet: v})} />
+                   <Label>Enable Bullet</Label>
+                </div>
               </Card>
             </div>
           </TabsContent>
@@ -248,7 +294,6 @@ export default function LoanEngineDashboard() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {loanInput.drawdowns?.length === 0 && <TableRow><TableCell colSpan={3} className="text-center py-12 text-muted-foreground italic">No incremental drawdowns recorded.</TableCell></TableRow>}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -280,7 +325,6 @@ export default function LoanEngineDashboard() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {loanInput.manualPayments?.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-12 text-muted-foreground italic">No payments recorded.</TableCell></TableRow>}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -373,14 +417,23 @@ export default function LoanEngineDashboard() {
               <DialogTitle>Bulk Accrual Import</DialogTitle>
               <DialogDescription>Upload CSV to populate drawdowns and settlements across multiple fiscal years.</DialogDescription>
             </DialogHeader>
-            <div className="py-8 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center space-y-4 hover:bg-white/5 transition-colors cursor-pointer">
+            <div 
+              className="py-8 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center space-y-4 hover:bg-white/5 transition-colors cursor-pointer"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <Upload className="h-10 w-10 text-primary" />
               <p className="text-sm font-medium">Click to select CSV file</p>
               <p className="text-[10px] text-muted-foreground">Columns: type, date, amount, period, principal, interest</p>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                accept=".csv" 
+                onChange={handleFileUpload} 
+              />
             </div>
             <div className="flex justify-end gap-3 mt-4">
               <Button variant="ghost" onClick={() => setIsImportOpen(false)}>Cancel</Button>
-              <Button className="bg-primary">Process Import</Button>
             </div>
           </DialogContent>
         </Dialog>
