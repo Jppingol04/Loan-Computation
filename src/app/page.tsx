@@ -248,8 +248,18 @@ export default function LoanEngineDashboard() {
     return schedule.filter(p => p.date.startsWith(yearFilter));
   }, [schedule, yearFilter]);
 
-  const totalCurrentPrincipal = loanInput.principalAmount + (loanInput.drawdowns?.reduce((a,b) => a+b.amount, 0) || 0);
-  const totalInterestAccrued = schedule.reduce((acc, curr) => acc + curr.interestAccrual, 0);
+  // Derived Stat Totals from the Schedule for IFRS accuracy
+  const totalCurrentExposure = useMemo(() => {
+    // Latest closing balance in the schedule is the remaining exposure
+    if (schedule.length === 0) return loanInput.principalAmount;
+    // For a projection tool, showing the current outstanding (not final zero) is better
+    // We'll show the max balance reached if all projected, or current month balance
+    return schedule.reduce((max, p) => Math.max(max, p.closingBalance), 0);
+  }, [schedule, loanInput.principalAmount]);
+
+  const totalInterestAccrued = useMemo(() => {
+    return schedule.reduce((acc, curr) => acc + curr.interestAccrual, 0);
+  }, [schedule]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-50 font-body">
@@ -276,7 +286,7 @@ export default function LoanEngineDashboard() {
           <Card className="bg-slate-900 border-white/5 shadow-2xl">
             <CardContent className="pt-6">
               <div className="flex items-center gap-2 mb-2"><Wallet className="h-4 w-4 text-primary" /><p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Gross Exposure</p></div>
-              <p className="text-2xl font-bold font-code">{loanInput.currency} {totalCurrentPrincipal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              <p className="text-2xl font-bold font-code">{loanInput.currency} {totalCurrentExposure.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </CardContent>
           </Card>
           <Card className="bg-slate-900 border-white/5 shadow-2xl">

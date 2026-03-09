@@ -90,7 +90,6 @@ function calculateDays(start: Date, end: Date, convention: DayCountConvention): 
     return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1);
   }
   
-  // Use Math.round to handle potential DST offsets (e.g. 23h or 25h days during transition)
   const diffTime = Math.abs(end.getTime() - start.getTime());
   return Math.round(diffTime / (1000 * 60 * 60 * 24));
 }
@@ -117,21 +116,20 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
   const originalStart = parseLocalDate(startDate);
   const rate = annualInterestRate / 100;
 
-  // Determine the EARLIEST relevant date (Start Date or any Drawdown)
   let earliestDate = new Date(originalStart);
   drawdowns.forEach(d => {
     const dDate = parseLocalDate(d.date);
     if (dDate < earliestDate) earliestDate = new Date(dDate);
   });
 
-  // Align calculation start to the beginning of the earliest month
   const calcStart = new Date(earliestDate.getFullYear(), earliestDate.getMonth(), 1);
   const originalEnd = new Date(originalStart.getFullYear(), originalStart.getMonth() + termInMonths, 0);
   
-  // Total months to calculate (from earliest event to intended maturity)
   const totalMonths = (originalEnd.getFullYear() - calcStart.getFullYear()) * 12 + (originalEnd.getMonth() - calcStart.getMonth());
 
-  let currentBalance = 0;
+  // Track principal and interest separately to avoid compounding
+  let principalBalance = 0;
+  let interestBalance = 0;
   let principalInjected = false;
   let cumulativeInterest = 0;
 
@@ -144,14 +142,12 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
 
     const yearBasis = getYearBasis(dayCountConvention);
 
-    // 1. Accrue interest on Opening Balance (carryover principal from last month end)
+    // 1. Accrue interest ONLY on Principal Balance (Simple Interest)
     const totalDaysInPeriod = calculateDays(prevPeriodEnd, targetDate, dayCountConvention);
-    let interestAccrual = currentBalance * rate * (totalDaysInPeriod / yearBasis);
+    let interestAccrual = principalBalance * rate * (totalDaysInPeriod / yearBasis);
 
     // 2. Intra-month Initial Principal Accrual
-    // If the loan starts within this month, we calculate its interest for the remaining days.
     if (!principalInjected && targetDate >= originalStart) {
-      // Convention adjustment: if starting on the 1st, treat as inclusive of the full month
       const effectiveStart = originalStart.getDate() === 1 
         ? new Date(originalStart.getFullYear(), originalStart.getMonth(), 0)
         : originalStart;
@@ -159,7 +155,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
       const daysRemaining = calculateDays(effectiveStart, targetDate, dayCountConvention);
       interestAccrual += principalAmount * rate * (daysRemaining / yearBasis);
       
-      currentBalance += principalAmount;
+      principalBalance += principalAmount;
       principalInjected = true;
     }
 
@@ -171,7 +167,6 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
 
     periodDrawdowns.forEach(d => {
       const dDate = parseLocalDate(d.date);
-      // Convention adjustment: if drawdown is on the 1st, treat as inclusive of the full month
       const effectiveDDate = dDate.getDate() === 1
         ? new Date(dDate.getFullYear(), dDate.getMonth(), 0)
         : dDate;
@@ -181,6 +176,7 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
     });
 
     const drawdownAmount = periodDrawdowns.reduce((acc, d) => acc + d.amount, 0);
+    principalBalance += drawdownAmount; // Drawdowns increase principal base
     
     // 4. Payments
     const manualPmtList = manualPayments.filter(p => p.periodNumber === i);
@@ -189,35 +185,39 @@ export function generateAmortizationSchedule(input: LoanInput): AmortizationPeri
 
     // 5. Bullet Settlement at Maturity
     if (i === totalMonths && isBullet) {
-      const totalOutstandingPrincipal = currentBalance + drawdownAmount;
-      principalPaid = Number(totalOutstandingPrincipal.toFixed(2));
-      interestPaid = Number(interestAccrual.toFixed(2));
+      principalPaid = Number(principalBalance.toFixed(2));
+      interestPaid = Number((interestBalance + interestAccrual).toFixed(2));
     }
 
     interestAccrual = Number(interestAccrual.toFixed(2));
-    const closingBalance = Number((currentBalance + drawdownAmount + interestAccrual - principalPaid - interestPaid).toFixed(2));
+    interestBalance += interestAccrual;
+    
+    // Apply payments
+    principalBalance = Number((principalBalance - principalPaid).toFixed(2));
+    interestBalance = Number((interestBalance - interestPaid).toFixed(2));
+    
     cumulativeInterest = Number((cumulativeInterest + interestAccrual).toFixed(2));
 
     let status: LoanStatus = periodStatuses[i] || (manualPmtList.length > 0 ? 'paid' : 'projected');
 
+    const totalOutstanding = Number((principalBalance + interestBalance).toFixed(2));
+
     schedule.push({
       periodNumber: i,
       date: dateStr,
-      openingBalance: Number(currentBalance.toFixed(2)),
+      openingBalance: Number((principalBalance + principalPaid + interestBalance + interestPaid - interestAccrual - drawdownAmount).toFixed(2)),
       drawdownAmount,
       interestAccrual,
       principalPaid,
       interestPaid,
       principalPortion: principalPaid,
       totalPayment: Number((principalPaid + interestPaid).toFixed(2)),
-      closingBalance: Math.max(0, closingBalance),
+      closingBalance: Math.max(0, totalOutstanding),
       cumulativeInterest,
       status,
     });
 
-    currentBalance = Math.max(0, closingBalance);
-    
-    if (currentBalance <= 0 && i >= totalMonths) break;
+    if (totalOutstanding <= 0 && i >= totalMonths) break;
   }
 
   return schedule;
